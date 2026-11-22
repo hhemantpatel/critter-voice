@@ -1,0 +1,17 @@
+# environments and big downloads (rebuildable)
+.venv/
+.venv-train/
+models/
+vendor/
+runs/
+__pycache__/
+*.pyc
+build*.log
+
+# personal: your voice recordings, your own test phrases, battery-test runs from this laptop
+data/recordings/
+data/test/user.txt
+results/
+
+# generated data (rebuild with data/gen.py)
+data/out/

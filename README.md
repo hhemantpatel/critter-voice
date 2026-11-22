@@ -45,8 +45,8 @@ stage, battery power sensor, noise floor 0.12 W on a 6.2 W baseline):
 
 The cost is the audio path waking the system about 47 times a second, not the Python code (under 1% CPU). So the policy is:
 
-- **On mains power:** always listening. Say "Jarvis" (or "hey Jarvis"). A cheap voice detector (Silero) gates everything, so the
-  speech model only runs when someone actually speaks.
+- **On mains power:** always listening. Say "Jarvis" or "hey Jarvis". The wake word is a tiny classifier on openWakeWord's audio
+  features that never turns speech into text; the speech model runs only after it fires.
 - **On battery:** the microphone stays off. Hovering the critter preloads the model; a double-click opens the mic for one command and
   closes it when you stop talking. About 50 commands a day then cost roughly 1 Wh, versus about 7 Wh for 8 hours of an open mic (estimates).
 
@@ -85,8 +85,9 @@ and asks you back when something is missing ("What time, sir?").
   screen is locked.
 - **Timers are systemd user timers** named `tommy-*`, so they survive a crash and can be listed and cancelled with
   `systemctl --user`.
-- **Voice:** `parec` mic -> openWakeWord "hey jarvis" plus a speech-based wake path (Silero voice detection, then the
-  speech model listens for "Jarvis") -> Hindi2Hinglish speech-to-text -> the model. Replies are pre-recorded phrases
+- **Voice:** `parec` mic -> a small "Jarvis" wake-word model trained on the user's own voice plus synthetic voices
+  (`tommy/wake.py`, `train/wake_train.py`) -> Silero voice detection for the end of the command -> Hindi2Hinglish
+  speech-to-text -> the model. The wake word hears sound features only, so nothing is transcribed while idle. Replies are pre-recorded phrases
   (`make_greetings.py`), several per situation so it does not repeat itself.
 
 More detail, with the reasoning behind each choice, is in [docs/DESIGN.md](docs/DESIGN.md). Every measurement and
@@ -133,7 +134,12 @@ uv venv --python 3.13 .venv-train   # then install torch for your CUDA version p
 .venv-train/bin/python vendor/llama.cpp/convert_hf_to_gguf.py runs/Qwen3-0.6B-lora_c --outfile runs/q.f16.gguf --outtype f16
 vendor/llama.cpp/build/bin/llama-quantize runs/q.f16.gguf models/tommy/qwen3-0.6b-lora_c-q8.gguf Q8_0
 
-# 6. spoken replies (needs internet once for the default Microsoft voice; or use an offline Kokoro voice)
+# 6. your own Jarvis wake word (about 8 minutes of recording, then about 25 minutes of generating and training)
+.venv/bin/python record_wake.py
+.venv-train/bin/python train/wake_synth.py
+.venv-train/bin/python train/wake_train.py --final     # (without --final it holds some clips out and prints detection / false-alarm numbers)
+
+# 7. spoken replies (needs internet once for the default Microsoft voice; or use an offline Kokoro voice)
 .venv-train/bin/python make_greetings.py
 ```
 
@@ -161,7 +167,9 @@ Careful: sleep, shutdown and lock really do happen after you confirm.
 - Tested on one machine and one voice. The reply bubble uses `qs -c caelestia ipc call buddy say`, which only exists in a
   customised Quickshell setup; elsewhere the bubble is a no-op.
 - The model is below the 95% target and still misreads unusual Hinglish; the confirm step is the safety net.
-- The speech wake path runs the speech model on every short phrase it hears, so it is meant for mains power, not battery.
+- The wake word is trained on one voice (about 29 recordings plus synthetic voices). On held-out clips it caught 8 of 9 of the
+  user's plain "Jarvis" and 11 of 11 with a command after it, with about 9 false alarms an hour on dense speech
+  (13 minutes of test audio, so rough). `--speech-wake` adds a slower fallback that transcribes every short phrase heard while idle.
 - Hover/click hooks for the critter itself are not built yet.
 - Always-on microphone listening costs about 1-1.3 W on the author's laptop (measured in `listen.py` / `measure-listen.sh`).
 

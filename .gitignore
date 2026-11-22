@@ -15,3 +15,5 @@ results/
 
 # generated data (rebuild with data/gen.py)
 data/out/
+data/wake/
+data/wake_synth/

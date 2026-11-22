@@ -179,3 +179,30 @@ the clarify question text. Strict = exact string match.
   installed as an offline option: `make_greetings.py bm_fable`.
 - Spoken lines are now several per situation (greet 10, done 10, nevermind 4, cancelled 4, sorry 4, cant 4, what_time 4, confirm 5 = 45 clips),
   chosen at random, never the same line twice in a row (`play()` in `tommy/voice.py`; edit `PHRASES` in `make_greetings.py`).
+
+## 2026-11-22: media tools, 19 tools, retrain `_c`
+- Added `open_site` (youtube, whatsapp, gmail, github, chatgpt, maps, spotify; a fixed table, the model never supplies a URL or command),
+  `play_music` (opens a YouTube search; `yt-dlp` is not installed, so no autoplay) and `media_control` (playerctl play/pause/next/previous).
+- Data now 1574 train / 330 test, 19 tools. Phrases that are now valid ("open youtube", "play some music", "gaana chalao", "open spotify")
+  were removed from the "refuse" list. Qwen3-0.6B LoRA `_c`: 88.8% strict, **93.6% by meaning**, 97.3% right tool, 0 risky misses (21/330), 323 s.
+  All 12 spot-check phrases proposed the right tool (nothing executed).
+- A test started a second model server on the same port as the user's running voice session and silently talked to the old model
+  ("ready in 0.01 s" gave it away); re-tested on a separate port.
+
+## 2026-11-22: custom Jarvis wake word (replaces the speech-based wake path)
+- Why: the speech-based wake path transcribed every short phrase heard while idle (the user saw a long stream of their own talking
+  scroll past). The user chose a wake word trained on their voice instead. Transcripts of non-wake speech are no longer printed.
+- Data: 70 recordings by the user (`record_wake.py`: 29 plain wake, 11 wake+command, 30 ordinary speech) + 438 synthetic "Jarvis" clips
+  (32 Kokoro voices incl. Hindi-voiced, 14 Microsoft voices incl. en-IN, speeds/pitches) + 959 synthetic non-wake clips (28 min: Tommy's own
+  sentences, doc sentences, look-alike words: service, Marvel, harvest, Travis, Hey Siri ...). `train/wake_synth.py`.
+- Model: 16 x 96 openWakeWord embeddings (about 1.3 s) -> 96 hidden units -> score, in `tommy/wake.py`; fires only if two frames in a row are high.
+- First run: 100% detection but ~150-240 false alarms per hour (4 of 10 held-out ordinary clips fired). Causes: half-said words were never
+  negatives, positives weighted far above negatives, too little ordinary speech. Fixes: partial-word windows as negatives, speed/pitch variation of
+  the user's clips, equal weights, three rounds of hard-negative mining, two-in-a-row rule.
+- Held-out result (9 of the user's plain wake clips, 11 wake+command, 10 ordinary clips, 15% of synthetic, 13 min of negative audio):
+  8/9 plain, 11/11 with command, 100% synthetic; 2 false alarms in 12.9 min (~9/h, both on the user's ordinary clips with look-alike
+  lines such as "Hey Siri"/"Hey buddy"). Threshold 0.8.
+- Final model trained on everything: 95% of the user's wake clips fire (they were in training), 1 of 30 ordinary clips fires, room noise max 0.15.
+- Bugs: the scikit-learn stub (needed by openWakeWord) must have a module spec or torch's lazy imports fail (`sklearn.__spec__ is None`);
+  a hung Microsoft-voice request stalled generation for 10 minutes (added a 20 s timeout); a `pkill -f` matched its own shell (twice).
+- Not yet tested live with the user's voice in a real room for hours.

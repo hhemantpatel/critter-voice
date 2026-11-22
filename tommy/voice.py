@@ -6,7 +6,7 @@
 
 Audio is held in memory only, never written to disk. Needs the packages in .venv-train.
 """
-import argparse, collections, difflib, re, subprocess, sys, time, types, wave
+import argparse, collections, difflib, importlib.machinery, re, subprocess, sys, time, types, wave
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +30,7 @@ def _stub_sklearn():
                         "sklearn.preprocessing": ["FunctionTransformer", "StandardScaler"]}.items():
         mod = types.ModuleType(name)
         mod.__path__ = []
+        mod.__spec__ = importlib.machinery.ModuleSpec(name, None)      # torch calls find_spec() on every loaded module
         for attr in attrs:
             setattr(mod, attr, object)
         sys.modules.setdefault(name, mod)
@@ -118,23 +119,22 @@ class Mic:
 
 class Ears:
     def __init__(self, gpu=False):
-        import torch                                  # import these first: torch inspects every loaded module,
-        from transformers import pipeline             # and the scikit-learn stub below has no module spec
+        import torch
+        from transformers import pipeline
         _stub_sklearn()
-        import openwakeword
         from openwakeword.vad import VAD
-        models = Path(openwakeword.__file__).parent / "resources" / "models"
-        self.wake = openwakeword.Model(wakeword_models=[str(models / "hey_jarvis_v0.1.onnx")], inference_framework="onnx")
+        from tommy.wake import JarvisWake
+        self.wake = JarvisWake()                  # trained on this user's voice; hears sound features only, never words
         self.vad = VAD()
-        dev = 0 if (gpu and torch.cuda.is_available()) else -1
         self._seg, self._pre, self._over, self._speech, self._quiet = [], collections.deque(maxlen=PREROLL), False, 0, 0
+        dev = 0 if (gpu and torch.cuda.is_available()) else -1
         self.asr = pipeline("automatic-speech-recognition", model=str(ROOT / "models/asr/Whisper-Hindi2Hinglish-Swift"),
                             device=dev, dtype=torch.float16 if dev == 0 else torch.float32)
         ids = self.asr.tokenizer.get_prompt_ids(HINT)
         self.prompt_ids = torch.tensor(ids) if not isinstance(ids, torch.Tensor) else ids
 
     def woke(self, frame):
-        return max(self.wake.predict(frame).values()) > WAKE_THRESHOLD
+        return self.wake.predict(frame) >= self.wake.threshold
 
     def capture(self, mic, wait_s=5.0, max_s=14.0):
         """Record from the first speech until 1.7 s of quiet. Returns float32 audio, or None if nobody spoke."""
@@ -194,6 +194,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-wake", action="store_true")
     ap.add_argument("--wav")
+    ap.add_argument("--speech-wake", action="store_true", help="also wake on the word Jarvis found by transcribing every short phrase heard while idle (uses more CPU, hears more)")
     ap.add_argument("--gpu", action="store_true", help="run speech-to-text on the GPU (default: CPU, as on battery)")
     a = ap.parse_args()
     from tommy.agent import Agent
@@ -264,14 +265,16 @@ def main():
             else:
                 frame = mic.read()
                 fast = ears.woke(frame)
-                seg = ears.push(frame)
+                seg = ears.push(frame) if a.speech_wake else None
                 if fast and time.monotonic() - last > COOLDOWN:
                     pass                                              # the wake word model heard "hey jarvis"
                 elif seg is not None and time.monotonic() - last > COOLDOWN:
                     t = time.monotonic()
                     text = ears.transcribe(seg)                       # a short burst of speech: is it "Jarvis ..."?
                     rest = after_jarvis(text)
-                    print(f'  (heard "{text}" in {time.monotonic() - t:.1f}s: {"wake" if rest is not None else "not for me"})', flush=True)
+                    # only a match is shown: speech that is not for Tommy is checked in memory and dropped, never printed or stored
+                    if rest is not None:
+                        print(f'  (woken by "{text}" in {time.monotonic() - t:.1f}s)', flush=True)
                     if rest is None:
                         mic.drain(); ears.reset_idle()
                         continue

@@ -17,7 +17,7 @@ choose to make for benchmarking).
 
 ## What it can do
 
-16 tools, each one a small Python function in `tommy/tools/`:
+19 tools, each one a small Python function in `tommy/tools/`:
 
 | Area | Examples of what you can say |
 |---|---|
@@ -26,10 +26,53 @@ choose to make for benchmarking).
 | Focus and stopwatch | "start a focus session", "focus status", "start the stopwatch" |
 | Notes | "note this down: buy milk", "read my notes" |
 | Do not disturb, hotspot, network | "dnd on for 30 minutes", "turn on the hotspot" (asks first), "is my internet working" |
+| Sites and music | "open youtube", "whatsapp kholo", "play believer by imagine dragons" (opens a YouTube search), "pause the music", "agla gaana" |
 | Manage | "what is scheduled", "cancel all timers" |
 | Anything else | it says it didn't understand, instead of guessing |
 
 Missing details are asked for out loud: "put my PC to sleep" gets "What time, sir?".
+
+## Design highlights
+
+### 1. Listening without draining the battery
+An always-open microphone is expensive on a laptop, so it was measured first (`listen.py`, `measure-listen.sh`, 5 minutes per
+stage, battery power sensor, noise floor 0.12 W on a 6.2 W baseline):
+
+| Stage | Extra power | Battery life lost per full charge |
+|---|---|---|
+| Keeping the microphone open | +0.93 W | about 0.9 h |
+| Microphone + wake word model | +1.27 W | about 1.15 h |
+
+The cost is the audio path waking the system about 47 times a second, not the Python code (under 1% CPU). So the policy is:
+
+- **On mains power:** always listening. Say "Jarvis" (or "hey Jarvis"). A cheap voice detector (Silero) gates everything, so the
+  speech model only runs when someone actually speaks.
+- **On battery:** the microphone stays off. Hovering the critter preloads the model; a double-click opens the mic for one command and
+  closes it when you stop talking. About 50 commands a day then cost roughly 1 Wh, versus about 7 Wh for 8 hours of an open mic (estimates).
+
+The mains/battery switch comes from UPower. *Status: the measurements and the always-listening path on mains are built; the
+hover and double-click hooks in the critter's shell are designed but not built yet.*
+
+### 2. Loading the model at the right moment
+The model is not kept in memory. It is started when you hover the critter, so by the time you speak it is ready, and it is stopped after
+about 90 seconds idle. Measured with llama.cpp and memory-mapped weights: the server is ready in 0.4-1.1 s depending on how warm the file cache is,
+and most of that is vocabulary setup, not weights. Two more things keep the answer quick:
+
+- **A compact prompt.** The tool descriptions are *not* sent with every request. Fine-tuning teaches the model the tool names, which cuts
+  about 1,400 prompt tokens and takes prompt processing from over 1 s to about 75 ms.
+- **A small model** (Qwen3-0.6B, 8-bit, about 0.6 GB), so the answer itself takes 0.4-0.8 s on the CPU.
+
+### 3. Python functions plus a little retraining give it "agentic" ability
+The model is not asked to be smart; it is asked to choose. Every ability is a plain Python function with a type-hinted signature and
+a one-line docstring. A decorator turns that into the schema, and a short fine-tune teaches the model when to call it:
+
+1. Write the function (for example `open_site(site)` in `tommy/tools/media.py`).
+2. Add 15-30 example phrases in English, Hinglish and broken English to `data/gen.py`.
+3. Run a LoRA fine-tune (about 5-7 minutes on a 6 GB laptop GPU) and re-run the held-out test.
+
+That is how it went from 16 to 19 tools in one sitting, with the score rising from 92.7% to 93.6% on a harder test. The model only picks
+the tool and copies words; deterministic code does the arithmetic, validates arguments, asks for confirmation on risky actions
+and asks you back when something is missing ("What time, sir?").
 
 ## How it works
 
@@ -51,11 +94,12 @@ dead end is in [docs/LOG.md](docs/LOG.md).
 
 ## Results so far
 
-Held-out test of 288 phrases whose sentence patterns and time wordings never appear in training:
+Held-out test (288 phrases for the 16-tool rows, 330 for the 19-tool row) whose sentence patterns and time wordings never appear in training:
 
 | Model | Exact by meaning | Right tool | Training time (RTX 3050 6 GB) |
 |---|---|---|---|
-| Qwen3-0.6B + LoRA | **92.7%** | 98.3% | about 6.5 min |
+| Qwen3-0.6B + LoRA (19 tools, current) | **93.6%** | 97.3% | about 5.5 min |
+| Qwen3-0.6B + LoRA (16 tools) | 92.7% | 98.3% | about 6.5 min |
 | FunctionGemma 270M + LoRA | 83.0% | 96.5% | about 4.5 min |
 | FunctionGemma 270M, full fine-tune | 80.2% | 94.1% | about 5.5 min |
 
@@ -85,9 +129,9 @@ uv venv --python 3.13 .venv-train   # then install torch for your CUDA version p
 
 # 5. data, training, export
 .venv/bin/python data/gen.py
-.venv-train/bin/python train/sft.py --model Qwen3-0.6B --mode lora --epochs 3 --bs 8 --tag _b
-.venv-train/bin/python vendor/llama.cpp/convert_hf_to_gguf.py runs/Qwen3-0.6B-lora_b --outfile runs/q.f16.gguf --outtype f16
-vendor/llama.cpp/build/bin/llama-quantize runs/q.f16.gguf models/tommy/qwen3-0.6b-lora_b-q8.gguf Q8_0
+.venv-train/bin/python train/sft.py --model Qwen3-0.6B --mode lora --epochs 3 --bs 8 --tag _c
+.venv-train/bin/python vendor/llama.cpp/convert_hf_to_gguf.py runs/Qwen3-0.6B-lora_c --outfile runs/q.f16.gguf --outtype f16
+vendor/llama.cpp/build/bin/llama-quantize runs/q.f16.gguf models/tommy/qwen3-0.6b-lora_c-q8.gguf Q8_0
 
 # 6. spoken replies (needs internet once for the default Microsoft voice; or use an offline Kokoro voice)
 .venv-train/bin/python make_greetings.py

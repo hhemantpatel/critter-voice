@@ -13,7 +13,7 @@ from .model import Server
 from .registry import TOOLS, load_all
 from .system import ROOT
 
-GGUF = ROOT / "models/tommy/qwen3-0.6b-lora_b-q8.gguf"
+GGUF = ROOT / "models/tommy/qwen3-0.6b-lora_c-q8.gguf"
 SYSTEM = "You control a desktop assistant. Reply with exactly one function call."   # must match train/sft.py
 TIME_KEYS = {"duration", "after", "when"}
 _CALL = re.compile(r"<tool_call>\s*(\{.*\})\s*(?:</tool_call>|$)", re.S)

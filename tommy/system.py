@@ -72,3 +72,8 @@ def cancel(unit):
 def is_locked():
     """UNVERIFIED while actually locked (see plan): Caelestia's lock may read false. Used only as a guard."""
     return qs_ipc("lock", "isLocked").lower() == "true"
+
+
+def launch(argv):
+    """Start a program and let go of it (it keeps running after Tommy). argv is always a list."""
+    subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)

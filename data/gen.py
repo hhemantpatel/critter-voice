@@ -116,7 +116,7 @@ SPEC = {
                                 ["delete the reminder", "reminder hata do"]),
 }
 # clarify: unclear or out of scope; the model must ask instead of guessing.
-CLARIFY = {"train": ["what is the weather", "play some music", "send a mail to my friend", "open youtube", "tell me a joke", "volume up",
+CLARIFY = {"train": ["what is the weather", "send a mail to my friend", "tell me a joke", "volume up",
                      "sleep", "set a timer", "remind me", "hello", "kya haal hai", "kuch karo", "do it", "later", "how old are you",
                      "turn it off", "call someone", "brightness kam karo", "kal", "pc"],
            "test": ["what time is it in tokyo", "open my browser", "make it louder", "timer", "yaad dilao", "do something", "mausam kaisa hai",
@@ -178,10 +178,36 @@ MORE = {
 }
 for k, v in MORE.items():
     SPEC[k]["train"] += v["train"]; SPEC[k]["test"] += v["test"]
-CLARIFY["train"] += ["what's the temperature", "who are you", "open spotify", "sing a song", "what day is it", "search google", "turn up the volume", "make it brighter",
-                     "send a message", "take a screenshot", "kitne baje hain", "gaana chalao", "mausam batao", "kya chal raha hai", "set an alarm", "good morning",
-                     "remind", "note", "focus", "stopwatch kya hai", "delete my files", "restart", "log out", "what is two plus two", "translate this", "play a video"]
+CLARIFY["train"] += ["what's the temperature", "who are you", "sing a song", "what day is it", "search google", "turn up the volume", "make it brighter",
+                     "send a message", "take a screenshot", "kitne baje hain", "mausam batao", "kya chal raha hai", "set an alarm", "good morning",
+                     "remind", "note", "focus", "stopwatch kya hai", "delete my files", "restart", "log out", "what is two plus two", "translate this", "play a video", "open the settings", "close the window"]
 CLARIFY["test"] += ["what's the weather today", "open the camera", "tell me about yourself", "alarm lagao", "kuch bhi", "play something", "sab theek hai?", "how are you"]
+
+# ---- round 3: media and sites ----
+MEDIA = {
+ "open_site:youtube": T(["open youtube", "youtube kholo", "go to youtube", "launch youtube", "youtube chalu karo", "open up youtube please", "youtube open karo", "take me to youtube"],
+                        ["start youtube", "youtube khol do", "can you open youtube"]),
+ "open_site:whatsapp": T(["open whatsapp", "whatsapp kholo", "launch whatsapp", "whatsapp open karo", "go to whatsapp", "open whatsapp web", "whatsapp chalu karo"],
+                         ["start whatsapp", "whatsapp khol do", "can you open whatsapp"]),
+ "open_site:gmail": T(["open gmail", "gmail kholo", "check my mail", "open my email", "mail kholo", "launch gmail", "gmail open karo"], ["open email", "gmail khol do", "show my emails"]),
+ "open_site:github": T(["open github", "github kholo", "go to github", "launch github", "github open karo"], ["start github", "github khol do"]),
+ "open_site:chatgpt": T(["open chatgpt", "chatgpt kholo", "launch chatgpt", "go to chatgpt", "chatgpt open karo"], ["start chatgpt", "chatgpt khol do"]),
+ "open_site:maps": T(["open maps", "maps kholo", "open google maps", "launch maps", "maps open karo"], ["start maps", "google maps khol do"]),
+ "open_site:spotify": T(["open spotify", "spotify kholo", "launch spotify", "start spotify", "spotify chalu karo", "spotify open karo"], ["spotify khol do", "can you open spotify"]),
+ "play_music": T(["play {q} on youtube", "{q} bajao", "play {q}", "search {q} on youtube", "youtube pe {q} chalao", "play some {q}", "{q} sunao", "i want to listen to {q}",
+                  "{q} gaana chalao", "put on {q}", "play {q} music", "{q} laga do"],
+                 ["can you play {q}", "{q} play karo", "play me some {q}", "{q} suna do", "youtube par {q} lagao"]),
+ "media_control:play": T(["play the music", "resume music", "music play karo", "gaana chalao", "play some music", "resume", "continue the song", "gaana chalu karo"],
+                         ["resume the music", "gaana phir se chalao", "start the music"]),
+ "media_control:pause": T(["pause the music", "pause", "gaana roko", "music pause karo", "stop the music", "pause the song", "gaana band karo", "pause the video"],
+                          ["pause playback", "music roko", "stop the song"]),
+ "media_control:next": T(["next song", "skip this song", "agla gaana", "next track", "skip", "next gaana lagao", "play the next one"], ["skip the track", "agla gaana lagao", "go to the next song"]),
+ "media_control:previous": T(["previous song", "go back a song", "pichla gaana", "previous track", "play the last song again", "pehla wala gaana lagao"], ["go to the previous track", "pichla gaana lagao"]),
+}
+for k, v in MEDIA.items():
+    SPEC[k] = v
+QUERIES = {"train": ["lofi", "arijit singh songs", "kishore kumar", "relaxing music", "workout music", "imagine dragons", "punjabi songs", "study music", "old hindi songs", "coldplay", "bollywood hits", "arctic monkeys"],
+           "test": ["jazz", "ar rahman", "piano music", "sidhu moose wala", "shape of you", "chill beats"]}
 
 def noise(s):
     """Typos, dropped punctuation and Hinglish respellings, applied to everything but the copied span."""
@@ -201,7 +227,7 @@ def make(split, per_template):
         tool, _, variant = key.partition(":")
         for tpl in spec[split]:
             for _ in range(per_template):
-                slots = {"d": R.choice(D), "c": R.choice(C), "n": R.choice(N), "l": R.choice(L), "r": R.choice(RM)}
+                slots = {"q": R.choice(QUERIES[split]), "d": R.choice(D), "c": R.choice(C), "n": R.choice(N), "l": R.choice(L), "r": R.choice(RM)}
                 text = tpl.format(**slots)
                 args = {}
                 if tool == "start_timer":
@@ -218,6 +244,12 @@ def make(split, per_template):
                     args = {"action": variant}
                 elif tool == "do_not_disturb":
                     args = {"state": variant, **({"duration": slots["d"]} if "{d}" in tpl else {})}
+                elif tool == "open_site":
+                    args = {"site": variant}
+                elif tool == "play_music":
+                    args = {"query": slots["q"]}
+                elif tool == "media_control":
+                    args = {"action": variant}
                 elif tool == "hotspot":
                     args = {"state": variant}
                 elif tool == "cancel_scheduled":

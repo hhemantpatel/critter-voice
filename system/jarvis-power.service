@@ -1,0 +1,10 @@
+[Unit]
+Description=Apply the Jarvis on-charger rule
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/personal_projects/critter-voice/system/jarvis-power.sh
+
+[Install]
+WantedBy=graphical-session.target

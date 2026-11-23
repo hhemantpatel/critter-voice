@@ -26,7 +26,7 @@ choose to make for benchmarking).
 | Focus and stopwatch | "start a focus session", "focus status", "start the stopwatch" |
 | Notes | "note this down: buy milk", "read my notes" |
 | Do not disturb, hotspot, network | "dnd on for 30 minutes", "turn on the hotspot" (asks first), "is my internet working" |
-| Sites and music | "open youtube", "whatsapp kholo", "play believer by imagine dragons" (opens a YouTube search), "pause the music", "agla gaana" |
+| Apps, sites and music | "open classroom", "whatsapp kholo" (any installed app or web app, by fuzzy name), "play believer by imagine dragons" (opens a YouTube search), "pause the music", "agla gaana" |
 | Manage | "what is scheduled", "cancel all timers" |
 | Anything else | it says it didn't understand, instead of guessing |
 
@@ -66,7 +66,7 @@ and most of that is vocabulary setup, not weights. Two more things keep the answ
 The model is not asked to be smart; it is asked to choose. Every ability is a plain Python function with a type-hinted signature and
 a one-line docstring. A decorator turns that into the schema, and a short fine-tune teaches the model when to call it:
 
-1. Write the function (for example `open_site(site)` in `tommy/tools/media.py`).
+1. Write the function (for example `open_app(name)` in `tommy/tools/media.py`).
 2. Add 15-30 example phrases in English, Hinglish and broken English to `data/gen.py`.
 3. Run a LoRA fine-tune (about 5-7 minutes on a 6 GB laptop GPU) and re-run the held-out test.
 
@@ -93,18 +93,31 @@ and asks you back when something is missing ("What time, sir?").
 More detail, with the reasoning behind each choice, is in [docs/DESIGN.md](docs/DESIGN.md). Every measurement and
 dead end is in [docs/LOG.md](docs/LOG.md).
 
+### 4. It learns from your own use
+Every wake and every request is kept locally in `data/usage/` (git-ignored; `--no-learn` turns it off): the 2.5 s the wake word heard,
+what was transcribed, and what Tommy did. `learn.py review` walks through them (did you really say Jarvis? was that the right action,
+and if not, which one?), and `learn.py retrain` retrains both the command model and the wake word on what you checked. A new command
+model is only used if it scores at least as well as the old one on the held-out test. Nothing is learned without review, because an
+unchecked log would teach the model its own mistakes.
+
+### 5. Fast, because it works while you pause
+It stops listening 1.5 s after your last word. After 0.5 s of quiet it already transcribes and works out the action in the background (nothing runs yet),
+and drops that work if you go on speaking. Measured in a real-time test: 1.5 s from the last word to the action (median), i.e. the pause itself.
+
 ## Results so far
 
 Held-out test (288 phrases for the 16-tool rows, 330 for the 19-tool row) whose sentence patterns and time wordings never appear in training:
 
 | Model | Exact by meaning | Right tool | Training time (RTX 3050 6 GB) |
 |---|---|---|---|
-| Qwen3-0.6B + LoRA (19 tools, current) | **93.6%** | 97.3% | about 5.5 min |
+| Qwen3-0.6B + LoRA (19 tools, chat + ask-back phrases, current) | **95.2%** | 96.9% | about 5.5 min |
+| Qwen3-0.6B + LoRA (19 tools + chat phrases) | 94.5% | 96.8% | about 5.5 min |
+| Qwen3-0.6B + LoRA (19 tools) | 93.6% | 97.3% | about 5.5 min |
 | Qwen3-0.6B + LoRA (16 tools) | 92.7% | 98.3% | about 6.5 min |
 | FunctionGemma 270M + LoRA | 83.0% | 96.5% | about 4.5 min |
 | FunctionGemma 270M, full fine-tune | 80.2% | 94.1% | about 5.5 min |
 
-The target was 95%, so this is not there yet. Speech-to-text on one speaker's 48 recordings: the best of four models
+The target was 95%: the current model just reaches it on generated test phrases; real speech is harder. Speech-to-text on one speaker's 48 recordings: the best of four models
 (Hindi2Hinglish-Swift) had a 23-27% word error rate and understood 21 of 24 time phrases. Both are small samples.
 
 ## Setup
@@ -125,14 +138,18 @@ cmake --build vendor/llama.cpp/build -j --target llama-server llama-quantize
 .venv/bin/hf download Qwen/Qwen3-0.6B --local-dir models/Qwen3-0.6B
 .venv/bin/hf download Oriserve/Whisper-Hindi2Hinglish-Swift --local-dir models/asr/Whisper-Hindi2Hinglish-Swift
 
-# 4. training/voice environment (torch, transformers, peft, openwakeword, kokoro/edge-tts)
+#    the speech model in CTranslate2 int8 (needs step 4): 5x faster on the CPU
+.venv-train/bin/ct2-transformers-converter --model models/asr/Whisper-Hindi2Hinglish-Swift --output_dir models/asr/swift-ct2-int8 --quantization int8
+cp models/asr/Whisper-Hindi2Hinglish-Swift/tokenizer.json models/asr/swift-ct2-int8/
+
+# 4. training/voice environment (faster-whisper, openwakeword, onnxruntime, edge-tts; torch, transformers, peft for training)
 uv venv --python 3.13 .venv-train   # then install torch for your CUDA version plus the packages above
 
 # 5. data, training, export
 .venv/bin/python data/gen.py
 .venv-train/bin/python train/sft.py --model Qwen3-0.6B --mode lora --epochs 3 --bs 8 --tag _c
 .venv-train/bin/python vendor/llama.cpp/convert_hf_to_gguf.py runs/Qwen3-0.6B-lora_c --outfile runs/q.f16.gguf --outtype f16
-vendor/llama.cpp/build/bin/llama-quantize runs/q.f16.gguf models/tommy/qwen3-0.6b-lora_c-q8.gguf Q8_0
+vendor/llama.cpp/build/bin/llama-quantize runs/q.f16.gguf models/tommy/qwen3-0.6b-lora_f-q8.gguf Q8_0
 
 # 6. your own Jarvis wake word (about 8 minutes of recording, then about 25 minutes of generating and training)
 .venv/bin/python record_wake.py
@@ -145,12 +162,18 @@ vendor/llama.cpp/build/bin/llama-quantize runs/q.f16.gguf models/tommy/qwen3-0.6
 
 ## Run
 
+On the author's machine Jarvis runs as a user service that starts when the charger is plugged in and stops on battery
+(`system/`: `jarvis.service`, `jarvis-power.path`, `jarvis-power.sh`; `jarvis on | off | status | log`). While it listens, the desktop
+critter wears headphones and shows a pulsing dot (needs the matching shell IPC, `buddy hearing true|false`).
+
+
 ```bash
 .venv/bin/python -m tommy                       # type requests, no speech
 .venv-train/bin/python -m tommy.voice           # say "Jarvis ..." (or "hey jarvis ...")
 .venv-train/bin/python -m tommy.voice --no-wake # press Enter instead of using a wake word
 .venv/bin/python -m tommy.cli --direct start_timer duration="25 minutes"   # call a tool without the model
-.venv/bin/python tests/test_durations.py && .venv/bin/python tests/test_askback.py
+for t in durations askback apps replies; do .venv/bin/python tests/test_$t.py; done
+.venv-train/bin/python tests/test_endpoint.py && .venv-train/bin/python tests/test_voice_loop.py   # need your own recordings
 ```
 
 Careful: sleep, shutdown and lock really do happen after you confirm.
@@ -167,9 +190,8 @@ Careful: sleep, shutdown and lock really do happen after you confirm.
 - Tested on one machine and one voice. The reply bubble uses `qs -c caelestia ipc call buddy say`, which only exists in a
   customised Quickshell setup; elsewhere the bubble is a no-op.
 - The model is below the 95% target and still misreads unusual Hinglish; the confirm step is the safety net.
-- The wake word is trained on one voice (about 29 recordings plus synthetic voices). On held-out clips it caught 8 of 9 of the
-  user's plain "Jarvis" and 11 of 11 with a command after it, with about 9 false alarms an hour on dense speech
-  (13 minutes of test audio, so rough). `--speech-wake` adds a slower fallback that transcribes every short phrase heard while idle.
+- The wake word is trained on one voice (27 usable recordings plus synthetic voices). On held-out clips: 20 of 20 "Jarvis" caught, 0 of 10 silent-room
+  triggers, 1 of 10 ordinary-speech clips wakes it. Small samples.
 - Hover/click hooks for the critter itself are not built yet.
 - Always-on microphone listening costs about 1-1.3 W on the author's laptop (measured in `listen.py` / `measure-listen.sh`).
 

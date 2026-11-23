@@ -206,3 +206,115 @@ the clarify question text. Strict = exact string match.
 - Bugs: the scikit-learn stub (needed by openWakeWord) must have a module spec or torch's lazy imports fail (`sklearn.__spec__ is None`);
   a hung Microsoft-voice request stalled generation for 10 minutes (added a 20 s timeout); a `pkill -f` matched its own shell (twice).
 - Not yet tested live with the user's voice in a real room for hours.
+
+## 2026-11-22: "hears nothing" after the wake word
+- Symptom (live log): the Jarvis wake fired often, then `(heard nothing)` after 5 s of waiting; one command worked only after the user waited.
+- Cause: the loop played the greeting (about 1-2 s) first and discarded the mic audio recorded during it, so a command spoken right after
+  "Jarvis" was thrown away. (False wakes may also contribute; not measured yet.)
+- Fix: listen immediately after the wake word (ignoring the first 3 frames, the tail of "Jarvis" itself, as a speech start); if speech begins
+  within 1.3 s it is a one-breath command and no greeting is played; if not, greet and then wait up to 6 s. A leading "Jarvis" in the transcript is
+  stripped; a transcript that is only the wake word counts as "no command yet". Detector logits are clipped (overflow warnings were harmless
+  but noisy: very large negative logits on out-of-range audio).
+
+## 2026-11-22: earlier listening during the greeting, wake score shown, chat is not a command
+- Live: "I am just checking. Are you listening to me or not?" turned do-not-disturb ON. Added 40 chatty non-command phrases (English and
+  Hinglish: "are you listening", "testing testing", "sun raha hai kya" ...) as `clarify` and retrained (`_d`, 1604 train / 346 test):
+  88.2% strict, **94.5% by meaning** (19 real misses, 0 risky), up from 93.6%. Spot check: the chatty sentences now get "say that differently";
+  normal commands unchanged. `tommy/agent.py` now loads `qwen3-0.6b-lora_d-q8.gguf`.
+- User asked to start listening 0.5-0.8 s before the greeting ends. `play(..., lead=0.7)` starts the clip without waiting, drains the mic
+  0.7 s before its end and returns how many frames still hold our own voice; `capture()` ignores speech *starts* in those frames but keeps
+  them (preroll = skip + 2), so words spoken over the end of the greeting are kept.
+- Each wake now prints its score (`* woke (score 0.97)`), to tell real wakes from false ones. Wake threshold raised 0.8 -> 0.9 at run time
+  (held-out scores saturate near 0 or 1, so this costs almost no detection).
+- Still unknown: how often it wakes falsely in this room. Next step if it does: keep the audio around false wakes (with the user's consent) as
+  hard negatives and retrain the wake model.
+
+## 2026-11-22: learning from use, mic thread, live fixes
+- Live: "set a reminder" was misheard as "Shatter reminder" -> `cancel_scheduled(reminder)` -> 2 real reminders cancelled without asking.
+  `cancel_scheduled` is now confirm-tier.
+- Live: "What time, sir?" got no answer twice: the answer was spoken over the question and discarded. Questions (confirm, what time) now listen
+  during their last 0.7 s, like the greeting.
+- Live: "after this it starts ignoring me". Likely cause: the mic was read only when Tommy was free; during playback and transcription
+  the pipe (about 2 s) filled and the recorder could stall. `Mic` now reads on a background thread into a 30 s queue and restarts parec if it stops.
+  Tested: still streaming after 5 s and 8 s busy periods. Not proven to be the cause.
+- Live: "10 second stopwatch" -> stopwatch with an invalid duration; "set an alarm" -> refused. Added stopwatch/alarm phrasings for timers and
+  timers with no time (the agent then asks "What time, sir?"); removed "set a timer"/"set an alarm" from the refuse list. Retrain `_e`.
+- Learning from use: each wake writes `data/usage/events.jsonl` (+ the 2.5 s of audio before the wake in `data/usage/wake/`). `learn.py review` labels
+  wake clips (real / false) and actions (right / corrected); `learn.py retrain` retrains the command model with reviewed requests x5
+  (`sft.py --extra`) and keeps it only if its held-out score is not worse, and retrains the wake word with reviewed clips added
+  (`wake_train.py` reads `data/usage/reviewed.jsonl`), keeping the previous model as `jarvis_wake.prev.npz`.
+- Retrain `_f` (1679 train / 355 test) adds "set a reminder" with nothing said (Tommy asks the time, then "What should I remind you about, sir?")
+  and stopwatch/alarm phrasings: 93.0% strict, **95.2% by meaning** (17 real misses, 0 risky): first run above the 95% target. Live-log phrases
+  now right: "10 second stopwatch" -> timer, "set an alarm" -> asks time, "Set a reminder." -> asks (was cancel). `tommy/agent.py` loads `_f`;
+  `models/tommy/current-score.txt` = 95.2 is the bar `learn.py retrain` must not drop below. Agent now also asks for any missing non-time required
+  argument (reminder text, note text); spoken questions added. `tests/test_askback.py`: 10/10 + reminder flow.
+
+## 2026-11-22: always listening on the charger, listening animation on Sprout
+- `system/jarvis.service` runs `python -m tommy.voice`; `system/jarvis-power.path` watches `/run/power-source` (written by the system's
+  udev battery rule) and `jarvis-power.sh` starts the service on AC and stops it on battery. `jarvis off` (`system/jarvis`, linked to
+  `~/.local/bin/jarvis`) holds until the next plug-in; `jarvis on|status|log`. Units are symlinked into `~/.config/systemd/user/`.
+  Tested: start on AC, `jarvis off` stops it with no model server left behind, a repeat charger signal keeps it off, `jarvis on` restarts it.
+  SIGTERM now exits like Ctrl-C (stops the model server, clears the animation).
+- Caelestia fork: `buddy hearing true|false` IPC sets `Buddy.listening`; Sprout wears headphones, stays awake and shows a pulsing dot
+  (desktop and bar) only while a capture is running. `qs ipc call buddy listen` failed: qs reserves `listen`, renamed to `hearing`.
+  qmllint clean, check-sprout ok, shell restarted twice, no new log errors. The animation itself was not seen in a screenshot (a terminal
+  covered that corner).
+- End-of-speech pause raised 1.7 s -> 3 s at the user's request (each command now takes about 1.3 s longer to start processing).
+- Marking false wakes: say "wrong" / "galti se" / "false alarm" / "not you" / "kuch nahi" right after a wake (logged as outcome "false" and
+  labelled at once), or run `jarvis wrong [N]` / `jarvis right [N]` (`learn.py wrong|right`) for the latest unlabelled wake(s);
+  `jarvis review` opens the full review. Labelled wakes go into the next `learn.py retrain`.
+
+## 2026-11-23: floating timer clock
+- Timers ran as invisible systemd timers. Now `system.write_state()` writes `~/.local/state/tommy/timers.json` ({kind, label, due}) on every
+  schedule/cancel (and once when the agent starts), and the shell shows a small click-through pill top-right (`TimerPill.qml` in the
+  Caelestia fork): countdown timers, scheduled sleep/shutdown/lock, and the shell's own stopwatch. Reminders stay as notifications. It exists
+  only while something runs and ticks once a second.
+- First try showed nothing: the file did not exist when the shell started, so its file watcher never attached. Fixed by creating the file at
+  agent start, and writing it in place (an atomic rename can drop a file watch). Verified by screenshot: a 2-minute test timer and an existing
+  26-minute timer appeared and counted down; removing the test timer made it vanish within 2 s.
+- Live: "Cancel timer." -> confirm -> answer "cancel, haan, it, yeah" was read as NO because "cancel" was in the no-words, so the timer
+  kept running while Tommy said "Cancelled." (meaning: not done). The floating clock was right to keep showing it. Fixes: no-words are only
+  clear negatives (no, nahi, mat, don't, not); a refused action now says "Okay, I won't do that." / "Never mind, sir.", and "Cancelled, sir."
+  is spoken only when a cancel really happened. The timer the user meant to cancel was cancelled by hand.
+- End-of-speech pause set to 1.5 s (19 frames) at the user's request (was 3 s).
+
+## 2026-11-23: random wakes and missed wakes
+- Analysed all 32 logged wakes (`data/usage/`): 11 of 14 "nothing" wakes had NO speech before them and very low levels (frame std 28-60,
+  peaks 116-472): the wake model misfires on quiet room noise (score 0.93-1.0). It does not misfire on synthetic noise or on a fresh reset;
+  the recorded clips re-trigger it, so it is the sound itself (levels never seen in training). 14 of 17 "command" wakes had clear speech
+  (max voice 0.49-0.95 in the last 1.5 s); the other 3 had none, and their captures were background talk.
+- Fix 1: a wake counts only if the voice detector reached 0.3 in the last 1.5 s (`VOICE_NEEDED`). Replayed over the log it blocks 11/14
+  silent wakes and the marked false wake, and keeps 14/17 command wakes (the 3 it drops had no speech). Blocked wakes are logged as
+  "ignored" so they can be reviewed.
+- Fix 2 (missed "Jarvis"): the spoken reply now plays without blocking (`say_async`), so the mic is not thrown away for the reply's whole
+  duration; our own voice is ignored via `mute_until` (reply length + 0.3 s). Cooldown after a wake 2 s -> 1 s.
+- My edits broke the service twice (a duplicated `if` line, then a removed `seg` line); compile checks do not catch a missing name,
+  so every restart is now preceded by running the voice loop for ~15 s and checking its output.
+- Not proven live yet: whether misses are really fixed (no log of misses exists) and whether 11 silent wakes was the whole problem.
+- Added `tests/test_voice_loop.py`: the real `voice.main()` with a fake microphone playing the user's recorded "Jarvis, <command>" clips (agent, speakers,
+  desktop stubbed). It exercises wake -> capture -> speech-to-text -> agent. Run it before any restart of the service.
+
+## 2026-11-23 (evening): optimisation pass
+Complaint: "start a timer of 25 minutes" took about 20 s, random wakes, missed wakes, generic answers.
+- **Listening ran to its 14 s cap.** On 48 recordings + real room noise the old rule never ended on 14: it needed 3 loud voice frames (short commands
+  have 1-2) and fed every frame to the recurrent voice detector twice. New `Endpoint`: one pass; speech = voice > 0.4, or > 0.15 and louder than 15% of the
+  command's peak; start at 0.2; 1.5 s of quiet ends it; 8 s cap counted from your first word. Now 48/48 end, none cut early, median 1.48 s after the last word.
+- **Speech-to-text 6.35 s** that time because a retrain had silently fallen back to the CPU (NVIDIA libraries upgraded to 620.73 without a reboot, module still
+  620.70). `sft.py` now refuses a CPU run without `--cpu`.
+- **Speech engine: CTranslate2 int8** instead of PyTorch, same Swift weights: 0.26 s vs 1.36 s per clip. The prompt must be exactly the one the model was trained
+  with (hint, `<|hi|>`, timestamps allowed); the faster-whisper wrapper's own prompt lost 3 time phrases. Final, 48 recordings: times understood 21/24 both; WER 25.0%
+  vs 22.8%; through the command model: same tool 45/48 both, same full action 40 vs 41. PyTorch is no longer loaded (start 1.2 s; 612 MB).
+- **Work during the pause:** after 0.5 s of quiet, speech-to-text and the model's proposal run on a worker thread (no side effects; dropped if you go on).
+  Real-time loop test (`tests/test_voice_loop.py`): last word -> action **median 1.51 s, max 1.73 s**, with a training run in the background.
+- **Wake word fired on silence because I had trained silence as "Jarvis":** 013.wav is blank and 022.wav is a whisper; both were in the positives, 60 copies each, amplified.
+  Positives now need an audible voice. 31 no-voice wakes from real use and quiet-room sound at its true level were added as negatives. Held out:
+  Jarvis 20/20 (was 18/20), no-voice wakes 0/10 (was 10/10), ordinary speech 1/10 (was 0/10, but the old model had trained on those clips).
+- **Missed wakes:** every ignored wake reset the detector (0.1 s rebuild + 1.3 s refill + cooldown), up to once a minute. Ignored wakes now reset nothing. Voice gate 0.3 -> 0.15
+  (ignored wakes measured 0.00-0.05).
+- **Typed answers:** tools, dispatcher and agent return `Reply(text, kind)`; each kind has its own lines (no such app, didn't get that, no time, locked, failed ...).
+  Questions are plain words. The hotspot, focus stop and media keys used to claim success without checking; now they check. A generic "confirm" could have picked
+  a "shut the PC down?" line (glob matched confirm_*): fixed and tested.
+- **open_app** replaces the fixed site list: fuzzy match against installed .desktop entries (incl. Brave web apps), asks when unsure, "There's no app called X" when nothing fits.
+  The command model is not retrained for it yet (no GPU until a reboot); "open X" / "X kholo" is recognised in Python meanwhile.
+- `jarvis pause [min]` / `jarvis resume`. "7.30 a.m." was read as 7:18: fixed.
+- Code: voice.py 472 lines -> voice, ears, mic, speak (415); the speech-based wake path, beep, zero-shot code and --wav/--gpu modes removed.

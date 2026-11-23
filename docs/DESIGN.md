@@ -48,30 +48,31 @@ stopwatch tools wrap the existing `focus` and `stopwatch` IPC handlers instead o
 Notifications use `notify-send -a Sprout`, because Buddy.qml ignores notifications from that app name (otherwise
 Sprout would startle at its own reminder).
 
-## 6. Models and runtime (decided in phases 1-7; results go in LOG.md)
-- Candidates: FunctionGemma 270M (made to be fine-tuned for function calling) and Qwen3 0.6B (Apache-2.0). A 1B model
-  is the fallback only if both fail the decision rule.
-- Runtime: llama.cpp built from source (`vendor/llama.cpp`, CPU, AVX2). One build gives the server, the benchmark
-  tool, the quantiser and the HF -> GGUF converter we need after training. The server loads the GGUF with mmap, so
-  after the first load the file is in the page cache and a restart takes a fraction of a second.
-- Server lifecycle: started when you hover Sprout, stopped after about 90 s idle, so nothing sits in RAM.
-- Decision rule on held-out phrases: at least 95% correct tool and arguments, at most 1% wrong on risky tools, and
-  it must ask instead of guessing when the request is unclear. Smallest model that passes wins.
+## 6. Models and runtime
+- **Command model:** Qwen3-0.6B + LoRA, 8-bit, in llama.cpp's server on the CPU. It beat FunctionGemma 270M (95.2% vs 83% by meaning) at about 0.5 s per answer.
+  The prompt holds no tool descriptions; the fine-tune taught them, which saves about 1,400 tokens per request.
+- **Speech-to-text:** Hindi2Hinglish-Swift (best of four on the user's voice) in CTranslate2 int8, 0.26 s per command.
+- **Wake word:** a small classifier on openWakeWord's audio features, trained on the user's voice plus synthetic voices. A wake also needs a voice in the last 1.5 s.
+- **Rules that came from measurements** are in `LOG.md`; the important one: check training clips for an actual voice before using them.
 
-## 7. Listening (later phases)
-- On battery the mic is off. Hover preloads the model; double-click opens the mic until you stop talking.
-- On AC an always-on wake word ("hey tommy") may run. Battery measurement (see `results/`): keeping the mic open costs
-  about +0.9 W and a wake-word model about +1.3 W in total, roughly an hour of battery, which is why it is AC-only.
-- Audio is never stored, except recordings you choose to make for testing; those stay on this PC.
+## 7. One command, step by step
+1. `mic.py`: a thread keeps the last 30 s of microphone frames, so nothing is lost while Jarvis is busy.
+2. `ears.py` `woke()`: every 80 ms, wake score and voice level. Not printed, not transcribed.
+3. `ears.py` `capture()`: `Endpoint` decides where the command starts and ends (1.5 s of quiet). After 0.5 s of quiet the next two steps start in the background.
+4. `transcribe()` then `agent.propose()`: text, then one tool call. Neither has side effects, so a wrong guess about the pause costs nothing.
+5. `agent.ask()`: checks the proposal against the words (times, app names), asks for what is missing, confirms risky actions, runs the tool.
+6. `speak.py`: the bubble shows the text; the spoken line is chosen by the reply's *kind*.
 
-## 8. Layout
+## 8. Listening and power
+- Jarvis runs on mains power only (`system/`): an open microphone costs about 0.9 W and the wake model 0.3 W more on this laptop.
+- `jarvis pause` ignores the name for a while (dictation, calls). Wake clips are kept for `learn.py` on this PC only.
+
+## 9. Layout
 ```
-tommy/registry.py     @tool decorator, schema from type hints, argument validation
-tommy/durations.py    time phrases -> seconds / clock times (English + Hinglish)
-tommy/system.py       the only place that touches the machine (argv lists only)
-tommy/dispatch.py     validate -> risk tier -> run -> reply text
-tommy/tools/*.py      the tools
-tommy/fire.py         what a timer runs when it goes off (bubble + notification)
-tommy/cli.py          `python -m tommy.cli --direct <tool> k=v` test harness
-tests/                parser tests
+tommy/voice.py      the loop            tommy/ears.py   wake word, end of speech, speech-to-text
+tommy/mic.py        microphone          tommy/speak.py  spoken lines, listening animation
+tommy/agent.py      proposal + checks   tommy/dispatch.py  risk tier, run, Reply
+tommy/registry.py   @tool, Reply        tommy/apps.py   installed-app matching
+tommy/durations.py  time phrases        tommy/system.py the only place that touches the machine (argv lists only)
+tommy/tools/*.py    the tools           tests/          run all of them before restarting jarvis.service
 ```

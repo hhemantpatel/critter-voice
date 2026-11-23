@@ -1,0 +1,10 @@
+[Unit]
+Description=Start/stop Jarvis when the charger is plugged in or out
+PartOf=graphical-session.target
+
+[Path]
+PathChanged=/run/power-source
+Unit=jarvis-power.service
+
+[Install]
+WantedBy=graphical-session.target

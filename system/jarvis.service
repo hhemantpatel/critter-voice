@@ -1,0 +1,11 @@
+[Unit]
+Description=Jarvis voice assistant (listens for "Jarvis" while on mains power)
+After=pipewire.service graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+WorkingDirectory=%h/personal_projects/critter-voice
+ExecStart=%h/personal_projects/critter-voice/.venv-train/bin/python -m tommy.voice
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=5

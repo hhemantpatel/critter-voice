@@ -1,0 +1,17 @@
+#!/bin/sh
+# jarvis on | off | pause [min] | resume | status | log | wrong [N] | right [N] | review  -- control the always-listening voice assistant
+dir=${XDG_RUNTIME_DIR:-/tmp}
+case "$1" in
+    on)     rm -f "$dir/jarvis-off"; systemctl --user start jarvis.service; echo "Jarvis is listening." ;;
+    off)    touch "$dir/jarvis-off"; systemctl --user stop jarvis.service; echo "Jarvis is off until you plug the charger in again (or run: jarvis on)." ;;
+    status) if systemctl --user is-active --quiet jarvis.service; then echo "listening"; else echo "off"; fi
+            [ -e "$dir/jarvis-off" ] && echo "(switched off by hand; plugging the charger in again turns it back on)"; true ;;
+    pause)  m="${2:-10}"; case "$m" in *[!0-9]*) echo "usage: jarvis pause [minutes]"; exit 2 ;; esac
+            echo $(( $(date +%s) + m * 60 )) > "$dir/jarvis-paused"; echo "Jarvis ignores its name for $m min (jarvis resume to end it)." ;;
+    resume) rm -f "$dir/jarvis-paused"; echo "Jarvis is listening again." ;;
+    log)    journalctl --user -u jarvis.service -n 40 -f ;;
+    wrong)  "$HOME/personal_projects/critter-voice/.venv-train/bin/python" "$HOME/personal_projects/critter-voice/learn.py" wrong "${2:-1}" ;;
+    right)  "$HOME/personal_projects/critter-voice/.venv-train/bin/python" "$HOME/personal_projects/critter-voice/learn.py" right "${2:-1}" ;;
+    review) "$HOME/personal_projects/critter-voice/.venv-train/bin/python" "$HOME/personal_projects/critter-voice/learn.py" review ;;
+    *)      echo "usage: jarvis on | off | pause [min] | resume | status | log | wrong [N] (last wake was false) | right [N] | review" ;;
+esac

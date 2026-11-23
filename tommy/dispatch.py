@@ -1,7 +1,18 @@
 """Run one model-proposed call safely: validate, apply the risk tier, execute, return a Reply."""
+import re
 from .registry import Reply, check_args, load_all
 from . import system
 from .durations import human, is_now, parse_span
+
+
+YES = {"y", "yes", "yeah", "yep", "haan", "han", "ha", "ok", "okay", "sure", "theek", "thik", "kar", "karo", "confirm"}
+NO = {"n", "no", "nope", "nahi", "nahin", "mat", "dont", "don't", "not"}      # not "cancel"/"stop": "yes, cancel it" confirms a cancel
+
+
+def is_yes(answer):
+    """A clear yes, spoken or typed; anything else is a no."""
+    words = set(re.findall(r"[a-z']+", (answer or "").lower()))
+    return bool(words & YES) and not words & NO
 
 
 def describe(name, a):

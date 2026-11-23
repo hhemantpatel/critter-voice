@@ -334,3 +334,7 @@ Complaint: "start a timer of 25 minutes" took about 20 s, random wakes, missed w
 - `jarvis help` (also `-h`, `--help`): every terminal command and example phrase in plain English. Each example was run through the command model
   first; bare "play", "pause" and "reset" were dropped (not understood, or taken as music), and "cancel all timers" became "cancel everything",
   because the model reads both as all, reminders and planned sleep included.
+- `jarvis "any request"` types a command instead of saying it, with Jarvis on or off. Off: the model is loaded for that one request (about 0.65 s in all) and
+  released. On: the voice service's model server is reused and left running (0.39 s; `Server.start` uses a server that is already up and then never stops it).
+  Risky requests ask yes/no in the terminal, with the same yes/no words as by voice (`dispatch.is_yes`); with no terminal to ask on they are refused.
+- A misspelt site name ("whatapp") opened the website although the app is installed: the installed one now wins there too. `jarvis logs` = `jarvis log`.

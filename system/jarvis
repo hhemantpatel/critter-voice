@@ -1,5 +1,6 @@
 #!/bin/sh
 # jarvis on | off | pause [min] | resume | status | log | wrong [N] | right [N] | review | help  -- control the always-listening voice assistant
+# jarvis "any request"                                                                          -- do it now, whether he is on or off
 dir=${XDG_RUNTIME_DIR:-/tmp}
 repo=$HOME/personal_projects/critter-voice
 
@@ -22,7 +23,11 @@ TYPE THESE IN THE TERMINAL
   jarvis review      Go through what he heard and say what was right or wrong.
   jarvis help        Show this page.
 
-SAY THESE (say "Jarvis", wait for his greeting, then speak)
+  jarvis "set a timer for 10 minutes"
+                     Type a command instead of saying it. Works when Jarvis is on or off.
+                     You can type anything from the list below.
+
+SAY OR TYPE THESE (to say: say "Jarvis", wait for his greeting, then speak)
   Commands marked * ask you "yes or no" first. Answer yes / haan, or no / nahi.
 
   Timer              "set a timer for 10 minutes"
@@ -52,18 +57,25 @@ Jarvis listens when you plug in the charger and stops on battery.
 END
 }
 
+# only a whole command counts: "pause 5" is ours, "pause the music" is a request
+verb=$1
 case "$1" in
+    on|off|status|resume|log|logs|review|help|-h|--help) [ $# -eq 1 ] || verb=request ;;
+    pause|wrong|right) [ $# -eq 1 ] || { [ $# -eq 2 ] && case "$2" in ''|*[!0-9]*) false ;; esac; } || verb=request ;;
+esac
+
+case "$verb" in
     ""|help|-h|--help) show_help ;;
     on)     rm -f "$dir/jarvis-off"; systemctl --user start jarvis.service; echo "Jarvis is listening." ;;
     off)    touch "$dir/jarvis-off"; systemctl --user stop jarvis.service; echo "Jarvis is off until you plug the charger in again (or run: jarvis on)." ;;
     status) if systemctl --user is-active --quiet jarvis.service; then echo "listening"; else echo "off"; fi
             [ -e "$dir/jarvis-off" ] && echo "(switched off by hand; plugging the charger in again turns it back on)"; true ;;
-    pause)  m="${2:-10}"; case "$m" in *[!0-9]*) echo "usage: jarvis pause [minutes]"; exit 2 ;; esac
+    pause)  m="${2:-10}"
             echo $(( $(date +%s) + m * 60 )) > "$dir/jarvis-paused"; echo "Jarvis ignores its name for $m min (jarvis resume to end it)." ;;
     resume) rm -f "$dir/jarvis-paused"; echo "Jarvis is listening again." ;;
-    log)    journalctl --user -u jarvis.service -n 40 -f ;;
+    log|logs) journalctl --user -u jarvis.service -n 40 -f ;;
     wrong)  "$repo/.venv-train/bin/python" "$repo/learn.py" wrong "${2:-1}" ;;
     right)  "$repo/.venv-train/bin/python" "$repo/learn.py" right "${2:-1}" ;;
     review) "$repo/.venv-train/bin/python" "$repo/learn.py" review ;;
-    *)      echo "I don't know that one. See: jarvis help" ;;
+    *)      cd "$repo" && exec .venv/bin/python -m tommy "$*" ;;
 esac

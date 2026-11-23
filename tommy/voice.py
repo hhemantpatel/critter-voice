@@ -11,12 +11,11 @@ from pathlib import Path
 import numpy as np
 from . import speak, system
 from .agent import Agent
+from .dispatch import is_yes
 from .ears import Ears
 from .mic import FRAME_S, Mic, RATE
 from .system import ROOT
 
-YES = {"yes", "yeah", "yep", "haan", "han", "ha", "ok", "okay", "sure", "theek", "thik", "kar", "karo", "confirm"}
-NO = {"no", "nope", "nahi", "nahin", "mat", "dont", "don't", "not"}      # not "cancel"/"stop": "yes, cancel it" confirms a cancel
 FALSE_WAKE = {"wrong", "false alarm", "not you", "galti se", "galti", "kuch nahi", "nothing", "ignore", "never mind", "galat", "not for you"}
 QUESTIONS = {"time": ("what_time", "What time, sir?"), "set_reminder.text": ("remind_what", "What should I remind you about, sir?"),
              "add_note.text": ("note_what", "What should I note down, sir?")}
@@ -75,8 +74,7 @@ class Loop:
 
     def confirm(self, text, line="confirm"):
         self.asked = True
-        words = set(re.findall(r"[a-z']+", (self.question(line if speak.pick_clip(line) else "confirm", text) or "").lower()))
-        return bool(words & YES) and not words & NO
+        return is_yes(self.question(line if speak.pick_clip(line) else "confirm", text))
 
     def ask_back(self, kind):
         self.asked = True

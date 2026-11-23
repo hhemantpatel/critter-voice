@@ -11,15 +11,22 @@ class Server:
         self.cmd = [str(SERVER), "-m", str(gguf), "--port", str(port), "-c", str(ctx), "-t", str(threads),
                     "--no-webui", "--no-warmup", "-np", "1"]
 
+    def _up(self):
+        try:
+            return bool(urllib.request.urlopen(f"http://127.0.0.1:{self.port}/health", timeout=0.2).read())
+        except OSError:
+            return False
+
     def start(self):
-        t0 = time.monotonic()
+        """Use the server already running (the voice service's), which is then not ours to stop; else start one."""
+        t0, self.proc = time.monotonic(), None
+        if self._up():
+            return 0.0
         self.proc = subprocess.Popen(self.cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         while time.monotonic() - t0 < 30:
-            try:
-                urllib.request.urlopen(f"http://127.0.0.1:{self.port}/health", timeout=0.2).read()
+            if self._up():
                 return time.monotonic() - t0
-            except OSError:
-                time.sleep(0.02)
+            time.sleep(0.02)
         raise RuntimeError("llama-server did not start")
 
     def stop(self):

@@ -1,11 +1,11 @@
-"""Find and open an installed app (or a site you installed as an app, e.g. from Brave) by the name you said.
+"""Find, open and close an installed app (or a site you installed as an app, e.g. from Brave) by the name you said.
 
 The model only copies the name; matching is here, against this PC's own .desktop entries, so a new app works the moment it is
 installed and nothing has to be added. Nothing the model says is ever run: it only selects one of the installed entries.
 
     .venv/bin/python -m tommy.apps "you 2"      # show the best matches
 """
-import configparser, difflib, os, re, shlex
+import configparser, difflib, json, os, re, shlex, subprocess, time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +35,7 @@ class App:
     exec: str = ""
     terminal: bool = False
     extra: tuple = ()             # generic name, keywords, program name: weaker ways to name it
+    classes: tuple = ()           # window classes it opens
 
 
 _cache = None
@@ -62,7 +63,10 @@ def apps():
                 continue
             prog = os.path.basename(shlex.split(ex)[0]) if ex else ""
             extra = tuple(x for x in [e.get("GenericName", ""), prog, *e.get("Keywords", "").split(";")] if x)
-            found[f.name] = App(name, str(f), "", ex, e.get("Terminal", "").lower() == "true", extra)
+            classes = {e.get("StartupWMClass", ""), f.stem, prog, name.replace(" ", "")}
+            if "--app" in ex:                            # a web app: its program is the browser's, whose windows are not its own
+                classes = {e.get("StartupWMClass", ""), f.stem}
+            found[f.name] = App(name, str(f), "", ex, e.get("Terminal", "").lower() == "true", extra, tuple(c.lower() for c in classes if c))
     _cache = (stamp, list(found.values()))
     return _cache[1]
 
@@ -100,15 +104,20 @@ def _score(query, name):
     return best
 
 
+def _alias(query):
+    return ALIASES.get(" ".join(w for w in _words(query) if w not in FILLER - {"my"})) or ALIASES.get(query.lower())
+
+
+def _match(query, a, alias):
+    s = 1.0 if alias and a.name == alias else _score(query, a.name)
+    return round(max(s, max((0.9 * _score(query, x) for x in a.extra), default=0.0)), 3)
+
+
 def find(query, limit=5):
     """[(score, App)] best first."""
     query = query.strip(" .,!?")
-    alias = ALIASES.get(" ".join(w for w in _words(query) if w not in FILLER - {"my"}), None) or ALIASES.get(query.lower())
-    scored = []
-    for a in apps():
-        s = 1.0 if alias and a.name == alias else _score(query, a.name)
-        s = max(s, max((0.9 * _score(query, x) for x in a.extra), default=0.0))
-        scored.append((round(s, 3), a))
+    alias = _alias(query)
+    scored = [(_match(query, a, alias), a) for a in apps()]
     for name, url in SITES.items():
         scored.append((round(_score(query, name) - 0.01, 3), App(name, "", url)))      # an installed app of the same name wins
     if any(s >= SURE and not a.url and s >= 0.85 for s, a in scored):
@@ -123,6 +132,10 @@ def resolve(query):
     if not hits:
         return None, False
     score, app = hits[0]
+    if app.url:                                  # a misspelt site name ("whatapp"): the installed app of that name still wins
+        own = find(app.name)[0][1]
+        if not own.url:
+            return own, score >= SURE
     tie = len(hits) > 1 and score < 1.0 and hits[1][0] >= score - 0.01 and hits[1][1].name != app.name
     return app, score >= SURE and not tie
 
@@ -134,6 +147,79 @@ def command(app):
     if app.terminal:
         return ["kitty", "--", *[w for w in shlex.split(app.exec) if not w.startswith("%")]]
     return ["gio", "launch", app.path]
+
+
+# ---- closing ----
+TERMINALS = {"kitty", "foot", "footclient", "konsole", "org.kde.konsole", "alacritty"}      # closing one can kill a running job: always asked
+
+
+def _hypr(*args):
+    try:
+        return subprocess.run(["hyprctl", *args], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def windows():
+    """[{"address", "class", "workspace"}] of the open windows."""
+    try:
+        return [{"address": c["address"], "class": c["class"].lower(), "workspace": c["workspace"]["id"]} for c in json.loads(_hypr("clients", "-j")) if c.get("mapped", True) and c["class"]]
+    except (ValueError, KeyError, TypeError):
+        return []
+
+
+def on_screen(wins):
+    """Those you can see on the monitor you are using; of these, the focused one if there are several and it is among them."""
+    try:
+        mon = next(m for m in json.loads(_hypr("monitors", "-j")) if m["focused"])
+        shown = {mon["activeWorkspace"]["id"], mon["specialWorkspace"].get("id")} - {None}       # no id when none is open
+        focused = json.loads(_hypr("activewindow", "-j")).get("address")
+    except (ValueError, KeyError, StopIteration, TypeError):
+        return []
+    here = [w for w in wins if w.get("workspace") in shown]
+    return [w for w in here if w["address"] == focused] or here
+
+
+def _owner(cls):
+    """The app a window belongs to."""
+    return next((a for a in apps() if cls in a.classes), None) or App(cls.split(".")[-1].capitalize(), classes=(cls,))
+
+
+def to_close(name, everywhere=False):
+    """(app, the windows meant, sure, how many more it has). Only open apps are considered: (None, [], False, 0) if none fits.
+    With several windows it means the one on the screen you are using, unless `everywhere` ("all") or none of them is there."""
+    wins = windows()
+    if set(_words(name)) & {"this", "current", "ye", "yeh", "isko", "ise"}:
+        try:
+            here = json.loads(_hypr("activewindow", "-j"))
+            win = {"address": here["address"], "class": here["class"].lower()}
+        except (ValueError, KeyError):
+            return None, [], False, 0
+        return _owner(win["class"]), [win], False, 0             # named only by "this": always asked
+    alias, best = _alias(name), {}
+    for w in wins:
+        a = _owner(w["class"])
+        best.setdefault(a.name, (_match(name, a, alias), a, []))[2].append(w)
+    ranked = sorted(best.values(), key=lambda t: -t[0])
+    if not ranked or ranked[0][0] < ASK:
+        return None, [], False, 0
+    score, app, mine = ranked[0]
+    tie = len(ranked) > 1 and score < 1.0 and ranked[1][0] >= score - 0.01
+    meant = mine if everywhere or len(mine) == 1 else on_screen(mine) or mine
+    return app, meant, score >= SURE and not tie, len(mine) - len(meant)
+
+
+def close(wins, wait=1.0):
+    """Ask each window to close (never kills: an app may still ask about unsaved work). Returns how many are still open after `wait` s."""
+    for w in wins:
+        if re.fullmatch(r"0x[0-9a-f]+", w["address"]):
+            _hypr("dispatch", f'hl.dsp.window.close({{ window = "address:{w["address"]}" }})')
+    end = time.monotonic() + wait
+    while True:
+        left = {w["address"] for w in wins} & {w["address"] for w in windows()}
+        if not left or time.monotonic() > end:
+            return len(left)
+        time.sleep(0.1)
 
 
 if __name__ == "__main__":

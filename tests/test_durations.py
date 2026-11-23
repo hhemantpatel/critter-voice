@@ -7,7 +7,7 @@ SPAN = {
     "2h30m": 9000, "1 hour 30 minutes": 5400, "90 seconds": 90, "45 sec": 45, "half an hour": 1800,
     "a minute": 60, "an hour and a half": 5400, "2 and a half hours": 9000, "twenty five minutes": 1500,
     "one hundred twenty minutes": 7200, "thirty seconds": 30, "pachees minute": 1500, "pachis min": 1500,
-    "tees minute": 1800, "das minute": 600, "paanch minute": 300, "bees minat": 1200, "aadha ghanta": 1800,
+    "tees minute": 1800, "ikattis minute": 1860, "das minute": 600, "paanch minute": 300, "bees minat": 1200, "aadha ghanta": 1800,
     "dedh ghanta": 5400, "dhai ghante": 9000, "sawa ghanta": 4500, "sawa do ghante": 8100,
     "paune do ghante": 6300, "sadhe teen ghante": 12600, "ek ghanta": 3600, "do ghante": 7200,
     "ek ghanta pachees minute": 5100, "chalis minute": 2400, "pachas minute": 3000, "sau minute": 6000,

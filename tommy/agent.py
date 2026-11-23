@@ -7,7 +7,7 @@ Checks, in order:
   3. the dispatcher's own checks: argument types, confirm tier, locked screen
 """
 import json, re, urllib.error, urllib.request
-from . import apps
+from . import apps, system
 from .dispatch import run_call
 from .durations import parse_span, parse_clock, human, is_now
 from .model import Server
@@ -32,6 +32,30 @@ def open_request(text):
         if m:
             return m.group(1).strip(" .,!?") or None
     return None
+
+
+_CLOSE = re.compile(r"^\W*(?:(?:please|can|could|will|would|you|sir|jarvis|hey|ok|okay|now|just|so|and|haan|then|i want to)\W+)*"
+                    r"(?:close|quit|exit)\s+(?:down\s+)?(.+)", re.I)           # at the start only: not "remind me to close the door"
+_BAND = re.compile(r"(.+?)\s+(?:band|bandh|close)\s*(?:kar\s*d[oe]|kardo|krdo|karo|kro|kar)\b", re.I)
+# "close/stop" these is something else: the model's own tools (timers, power, focus, hotspot ...)
+_NOT_APPS = {"timer", "timers", "alarm", "alarms", "reminder", "reminders", "stopwatch", "countdown", "focus", "pomodoro", "session", "hotspot", "dnd",
+             "disturb", "notification", "notifications", "everything", "scheduled", "pc", "laptop", "computer", "system", "screen", "music", "song",
+             "gaana", "gana", "internet", "wifi", "sleep", "jarvis"}
+
+
+def close_request(text):
+    """The app name in "close X" / "X band karo", or None. Read by rule, before the model: it knows no such tool and would guess another."""
+    m = _CLOSE.search(text)
+    hindi = None if m else _BAND.search(text)
+    if not (m or hindi):
+        return None
+    name = re.sub(r"\b(please|plz|sir|app|application|windows?|all|every|both|sab|saare|sare|dono|the|of|my|on|this screen|current screen|this monitor|current monitor|here)\b|\bjarvis\b", " ", (m or hindi).group(1), flags=re.I)
+    name = " ".join(name.split()).strip(" .,!?")
+    if not name or set(re.findall(r"[a-z]+", name.lower())) & _NOT_APPS:
+        return None
+    if hindi and not apps.to_close(name)[2] and not apps.resolve(name)[1]:       # "band karo" ends many sentences: only if it names an app
+        return None
+    return name
 
 
 def build_prompt(text):
@@ -73,9 +97,31 @@ class Agent:
         except (AttributeError, ValueError, KeyError, TypeError):
             return None
 
+    def _close(self, name, everywhere, confirm):
+        app, wins, sure, more = apps.to_close(name, everywhere)
+        if not wins:
+            known, certain = apps.resolve(name)
+            return Reply(f"{known.name} isn't open, sir.", "not_open") if certain else Reply(f"There's no app called {name} open, sir.", "no_app")
+        if system.is_locked():
+            return Reply("The screen is locked, so I won't do that.", "locked")
+        n, terminal = len(wins), any(w["class"] in apps.TERMINALS for w in wins)
+        if n > 1 or not sure or terminal:
+            q = f"Close {n} {app.name} windows on this screen?" if n > 1 and more else f"Close all {n} {app.name} windows?" if n > 1 else f"Close {app.name}?"
+            if not (confirm and confirm(q, "confirm_close_all" if n > 1 else "confirm_close_app")):
+                return Reply("Okay, I won't do that.", "declined")
+        left = apps.close(wins)
+        if left:
+            return Reply(f"{app.name} is still open; it may be asking you to save.", "failed")
+        rest = f" {more} more still open." if more else ""
+        return Reply((f"Closed {app.name}." if n == 1 else f"Closed {n} {app.name} windows.") + rest)
+
     def ask(self, text, confirm=None, ask_back=None, call=...):
         """Returns (Reply, call) for one utterance; `call` may be a proposal made earlier for the same text.
         confirm(question, line) -> bool  asks yes/no.   ask_back(kind) -> str | None  asks for something missing (kind "time" ...)."""
+        name = close_request(text)
+        if name:
+            every = bool(re.search(r"\b(all|every|sab|saare|sare|dono|both)\b", text, re.I))
+            return self._close(name, every, confirm), ("close_app", {"name": name})
         call = self.propose(text) if call is ... else call
         # "open X" is regular enough to recognise without the model: use it when the model gave up, or (an older model) named a site
         if call is None or call[0] in ("clarify", "open_site") or call[0] not in TOOLS:

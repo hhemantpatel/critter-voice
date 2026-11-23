@@ -22,7 +22,7 @@ _HI_SPELL = {
     18: "atharah athaarah atharaah", 19: "unnis unnees unees", 20: "bees bis", 21: "ikkis ikkees ekkis",
     22: "baais bais", 23: "teis teyis", 24: "chaubis chaubees", 25: "pachis pachees pacchis pachchis pachhis",
     26: "chhabbis chabbis", 27: "sattais satais", 28: "atthais athais", 29: "untis unattis",
-    30: "tees tis", 31: "iktis", 32: "battis batis", 33: "taintis", 34: "chauntis", 35: "paintis",
+    30: "tees tis", 31: "iktis ikattis ikatis ikattees", 32: "battis batis", 33: "taintis", 34: "chauntis", 35: "paintis",
     36: "chhattis chattis", 37: "saintis", 38: "adtis", 39: "untalis", 40: "chalis chaalis",
     41: "iktalis", 42: "bayalis", 43: "taintalis", 44: "chauvalis", 45: "paintalis", 46: "chhiyalis",
     47: "saintalis", 48: "adtalis", 49: "unchas", 50: "pachas pachaas pachaas", 55: "pachpan",

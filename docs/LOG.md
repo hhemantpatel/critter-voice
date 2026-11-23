@@ -318,3 +318,16 @@ Complaint: "start a timer of 25 minutes" took about 20 s, random wakes, missed w
   The command model is not retrained for it yet (no GPU until a reboot); "open X" / "X kholo" is recognised in Python meanwhile.
 - `jarvis pause [min]` / `jarvis resume`. "7.30 a.m." was read as 7:18: fixed.
 - Code: voice.py 472 lines -> voice, ears, mic, speak (415); the speech-based wake path, beep, zero-shot code and --wav/--gpu modes removed.
+
+## 2026-11-23 (night): closing apps
+- Live: "close WhatsApp" was guessed as opening it, and once as "cancel everything", which (after a yes to "Shall I cancel it, sir?") cancelled a real 30-minute timer.
+  The model knows no close tool. No retrain: "close/quit/exit X" at the start of a sentence, and "X band karo" when X is an app, are read by rule before the model.
+  Timers, power, focus, hotspot, notifications, music keep going to the model.
+- Windows are matched to apps by class (web apps have their own, so "close WhatsApp" never touches Brave and the reverse). Several windows, terminals, unsure names
+  and "this window" are asked first. Closing is a normal close by address (`hl.dsp.window.close({window = "address:..."})`, verified with two throwaway windows: the
+  address is respected, an unknown one does nothing); nothing is killed, and if a window stays open Jarvis says so.
+- Our own greeting's last word was transcribed ("Sir, close WhatsApp", "Yes sir, ikattis minute ..."): a leading "... sir" is dropped. "ikattis" (31) added.
+  The cancel question is now "Shall I cancel your timers, sir?".
+- With several windows "close X" now means the one on the screen in use (visible workspace of the focused monitor; the focused window if several are there). "all" / "sab"
+  means every window and asks. None on this screen: asks about all of them. First version failed silently (an unused special workspace has no `id` in `hyprctl monitors -j`,
+  and the fake test data had one); found by a dry run on the real desktop, then verified with three throwaway windows on three workspaces: closed 1, left 2.

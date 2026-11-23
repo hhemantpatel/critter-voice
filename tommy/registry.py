@@ -17,7 +17,7 @@ _PY_TO_JSON = {str: "string", int: "integer", float: "number", bool: "boolean"}
 class Reply:
     """What Jarvis answers: the text for the bubble, and its kind, which picks the spoken line (make_greetings.py)."""
     text: str
-    kind: str = "done"      # done info cancelled declined not_understood no_app no_time failed locked
+    kind: str = "done"      # done info cancelled declined not_understood no_app not_open no_time failed locked
 
 
 @dataclass

@@ -36,7 +36,8 @@ class Endpoint:
 
 
 def strip_wake_word(text):
-    """Drop a leading "Jarvis" (a one-breath command): speech models spell it many ways."""
+    """Drop a leading "Jarvis" (a one-breath command; speech models spell it many ways), and the "... sir" that ends our own greeting."""
+    text = re.sub(r"^(?:(?:yes|hello|ahead|here|service|listening|for you|you are|help)[,.]?\s+)?sir\b[\s,.?!]*", "", text, flags=re.I)
     words = text.split()
     for i, w in enumerate(words[:3]):
         if difflib.SequenceMatcher(None, "jarvis", re.sub(r"[^a-z]", "", w.lower())).ratio() >= 0.62:

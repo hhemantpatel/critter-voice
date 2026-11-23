@@ -27,6 +27,7 @@ choose to make for benchmarking).
 | Notes | "note this down: buy milk", "read my notes" |
 | Do not disturb, hotspot, network | "dnd on for 30 minutes", "turn on the hotspot" (asks first), "is my internet working" |
 | Apps, sites and music | "open classroom", "whatsapp kholo" (any installed app or web app, by fuzzy name), "play believer by imagine dragons" (opens a YouTube search), "pause the music", "agla gaana" |
+| Close apps | "close whatsapp", "brave band karo", "close this window" (with several windows: the one on your current screen; "close all brave windows" asks first, and so do terminals) |
 | Manage | "what is scheduled", "cancel all timers" |
 | Anything else | it says it didn't understand, instead of guessing |
 

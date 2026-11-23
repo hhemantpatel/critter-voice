@@ -26,6 +26,7 @@ PHRASES = {
     "cancelled": ["Cancelled, sir.", "Understood, sir. Cancelled.", "Okay sir, it's off."],
     "not_understood": ["Sorry sir, I didn't get that.", "I didn't understand that one, sir.", "I'm afraid I can't do that one yet, sir.", "Pardon, sir?"],
     "no_app": ["There's no app by that name, sir.", "I couldn't find that app, sir.", "I don't see an app with that name, sir."],
+    "not_open": ["That one isn't open, sir.", "It's not open, sir."],
     "no_time": ["I couldn't work out the time, sir.", "Sorry sir, I didn't get the time."],
     "failed": ["I couldn't do that, sir.", "I'm afraid that didn't work, sir.", "Something went wrong there, sir."],
     "locked": ["The screen is locked, sir."],
@@ -35,7 +36,8 @@ PHRASES = {
     "note_what": ["What should I note down, sir?", "What would you like me to write down, sir?"],
     "confirm": ["Shall I go ahead, sir?", "Should I proceed, sir?", "Are you sure, sir?"],
     "confirm_sleep": ["Shall I put the PC to sleep, sir?"], "confirm_poweroff": ["Shall I shut the PC down, sir?"],
-    "confirm_lock": ["Shall I lock the screen, sir?"], "confirm_cancel_scheduled": ["Shall I cancel it, sir?"],
+    "confirm_lock": ["Shall I lock the screen, sir?"], "confirm_cancel_scheduled": ["Shall I cancel your timers, sir?"],
+    "confirm_close_app": ["Shall I close it, sir?"], "confirm_close_all": ["There are several open, sir. Shall I close them all?"],
     "confirm_hotspot": ["Shall I change the hotspot, sir?"],
     "did_you_mean": ["Did you mean the one on the screen, sir?", "Is this the one you meant, sir?"],
 }

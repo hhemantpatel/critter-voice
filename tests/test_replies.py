@@ -4,10 +4,10 @@ from pathlib import Path
 from tommy import dispatch, registry, speak, system
 from tommy.registry import Reply
 src = "".join(p.read_text() for p in (Path(__file__).parent.parent / "tommy").rglob("*.py"))
-kinds = {"done", "cancelled", "declined", "not_understood", "no_app", "no_time", "failed", "locked"}
+kinds = {"done", "cancelled", "declined", "not_understood", "no_app", "not_open", "no_time", "failed", "locked"}
 used = set(re.findall(r'Reply\([^\n]*?,\s*"(\w+)"\)', src)) | set(re.findall(r'says="(\w+)"', src))
 assert used <= kinds | {"info"}, used - kinds
-lines = kinds | {"greet", "what_time", "remind_what", "note_what", "confirm", "did_you_mean"} | {f"confirm_{x}" for x in ("sleep", "poweroff", "lock", "hotspot", "cancel_scheduled")}
+lines = kinds | {"greet", "what_time", "remind_what", "note_what", "confirm", "did_you_mean"} | {f"confirm_{x}" for x in ("sleep", "poweroff", "lock", "hotspot", "cancel_scheduled", "close_app", "close_all")}
 assert speak.CLIPS.exists() and not [k for k in lines if not speak.pick_clip(k)], [k for k in lines if not speak.pick_clip(k)]
 for _ in range(30): assert re.fullmatch(r"confirm_\d+\.wav", speak.pick_clip("confirm").name)      # never "shut the PC down?" by accident
 

@@ -13,5 +13,5 @@ if __name__ == "__main__":
             print(f"{t.risk:8}{n}  {t.description}")
     elif a.direct:
         name, kv = a.direct[0], dict(x.split("=", 1) for x in a.direct[1:])
-        ask = lambda q: input(f"{q} [y/N] ").strip().lower() == "y"
-        print(run_call(name, kv, ask if sys.stdin.isatty() else lambda q: True))
+        ask = lambda q, *_: input(f"{q} [y/N] ").strip().lower() == "y"
+        print(run_call(name, kv, ask if sys.stdin.isatty() else None).text)      # no terminal to ask on: risky tools are refused

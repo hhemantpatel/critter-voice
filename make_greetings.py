@@ -9,7 +9,7 @@ Microsoft voices (edge-tts) need internet ONLY while generating, and only the sh
 Kokoro voices run fully offline.
 Writes models/tts/greetings/*.wav once; at run time the voice loop only plays those files (no speech synthesis cost).
 """
-import subprocess, sys, wave
+import shutil, subprocess, sys, wave
 from pathlib import Path
 import numpy as np
 
@@ -18,22 +18,33 @@ VOICE = sys.argv[1] if len(sys.argv) > 1 else "edge:en-GB-ThomasNeural"
 # Several lines per situation, so Tommy does not repeat itself. File names: <situation>_<n>.wav; the voice loop picks one at random.
 PHRASES = {
     "greet": ["Hello sir.", "Yes sir?", "At your service, sir.", "I'm listening, sir.", "Right here, sir.", "How can I help, sir?",
-              "Ready when you are, sir.", "Go ahead, sir.", "Good to hear from you, sir.", "What can I do for you, sir?"],
+              "Ready when you are, sir.", "Go ahead, sir.", "What can I do for you, sir?"],
+    # one set per kind of Reply (tommy/registry.py)
     "done": ["Done, sir.", "Okay sir, done.", "Consider it done, sir.", "All set, sir.", "Taken care of, sir.", "As you wish, sir.",
-             "That's sorted, sir.", "Certainly, sir. Done.", "Right away, sir. Done.", "Done and dusted, sir."],
-    "nevermind": ["Never mind, sir.", "No problem, sir.", "Understood, sir. Forget it.", "Very well, sir."],
-    "cancelled": ["Cancelled, sir.", "Alright, I won't, sir.", "Okay sir, scrapped.", "Understood, sir. Cancelled."],
-    "sorry": ["Sorry sir, I didn't catch that.", "Pardon, sir? Could you say that again?", "I'm afraid I missed that, sir.", "Come again, sir?"],
-    "cant": ["I couldn't do that, sir.", "I'm afraid that didn't work, sir.", "Sorry sir, that failed.", "Something went wrong there, sir."],
-    "what_time": ["What time, sir?", "When should I do it, sir?", "And when would you like that, sir?", "By what time, sir?"],
-    "confirm": ["Shall I go ahead, sir?", "Should I proceed, sir?", "Are you sure, sir?", "Shall I do it, sir?", "Do you confirm, sir?"],
+             "That's sorted, sir.", "Certainly, sir. Done.", "Right away, sir."],
+    "declined": ["Never mind, sir.", "No problem, sir.", "Okay sir, I won't.", "Very well, sir."],
+    "cancelled": ["Cancelled, sir.", "Understood, sir. Cancelled.", "Okay sir, it's off."],
+    "not_understood": ["Sorry sir, I didn't get that.", "I didn't understand that one, sir.", "I'm afraid I can't do that one yet, sir.", "Pardon, sir?"],
+    "no_app": ["There's no app by that name, sir.", "I couldn't find that app, sir.", "I don't see an app with that name, sir."],
+    "no_time": ["I couldn't work out the time, sir.", "Sorry sir, I didn't get the time."],
+    "failed": ["I couldn't do that, sir.", "I'm afraid that didn't work, sir.", "Something went wrong there, sir."],
+    "locked": ["The screen is locked, sir."],
+    # questions
+    "what_time": ["What time, sir?", "When should I do it, sir?", "And when would you like that, sir?"],
+    "remind_what": ["What should I remind you about, sir?", "Remind you about what, sir?"],
+    "note_what": ["What should I note down, sir?", "What would you like me to write down, sir?"],
+    "confirm": ["Shall I go ahead, sir?", "Should I proceed, sir?", "Are you sure, sir?"],
+    "confirm_sleep": ["Shall I put the PC to sleep, sir?"], "confirm_poweroff": ["Shall I shut the PC down, sir?"],
+    "confirm_lock": ["Shall I lock the screen, sir?"], "confirm_cancel_scheduled": ["Shall I cancel it, sir?"],
+    "confirm_hotspot": ["Shall I change the hotspot, sir?"],
+    "did_you_mean": ["Did you mean the one on the screen, sir?", "Is this the one you meant, sir?"],
 }
 ITEMS = [(f"{cat}_{i}", text) for cat, texts in PHRASES.items() for i, text in enumerate(texts)]
 
-out = ROOT / "models/tts/greetings"
-out.mkdir(parents=True, exist_ok=True)
-for old in out.glob("*.wav"):
-    old.unlink()                              # drop clips from an earlier voice or an earlier phrase list
+final = ROOT / "models/tts/greetings"
+out = final.with_name("greetings.new")        # built apart, so a failure half way leaves the working voice alone
+shutil.rmtree(out, ignore_errors=True)
+out.mkdir(parents=True)
 
 
 def to_wav(src, dst):
@@ -64,4 +75,6 @@ else:
         with wave.open(str(out / f"{name}.wav"), "wb") as w:
             w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr); w.writeframes(pcm.tobytes())
         print(f"{name}: {text!r} {len(pcm) / sr:.2f}s")
+shutil.rmtree(final, ignore_errors=True)
+out.rename(final)
 print("voice:", VOICE)

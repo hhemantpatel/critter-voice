@@ -13,6 +13,13 @@ RISKS = ("safe", "confirm")
 _PY_TO_JSON = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
 
+@dataclass(frozen=True)
+class Reply:
+    """What Jarvis answers: the text for the bubble, and its kind, which picks the spoken line (make_greetings.py)."""
+    text: str
+    kind: str = "done"      # done info cancelled declined not_understood no_app no_time failed locked
+
+
 @dataclass
 class Tool:
     name: str
@@ -21,6 +28,7 @@ class Tool:
     description: str
     params: dict          # name -> {"type":..., "description":..., "enum"?:[...]}
     required: list
+    says: str = "done"    # kind of Reply when the tool returns plain text
 
     def schema(self):
         return {"name": self.name, "description": self.description,
@@ -30,7 +38,7 @@ class Tool:
 TOOLS: dict[str, Tool] = {}
 
 
-def tool(risk="safe", **param_docs):
+def tool(risk="safe", says="done", **param_docs):
     """@tool(risk="confirm", after="a time span such as '25 minutes'")"""
     assert risk in RISKS
 
@@ -48,7 +56,7 @@ def tool(risk="safe", **param_docs):
             if p.default is inspect.Parameter.empty:
                 required.append(name)
         doc = (inspect.getdoc(fn) or "").split("\n")[0]
-        TOOLS[fn.__name__] = Tool(fn.__name__, fn, risk, doc, params, required)
+        TOOLS[fn.__name__] = Tool(fn.__name__, fn, risk, doc, params, required, says)
         return fn
     return wrap
 

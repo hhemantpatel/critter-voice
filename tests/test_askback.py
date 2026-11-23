@@ -3,7 +3,7 @@ import sys, os; sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..")
 from tommy import agent as A
 
 ran = []
-A.run_call = lambda name, args, confirm=None: (ran.append((name, dict(args))), "ran")[1]
+A.run_call = lambda name, args, confirm=None: (ran.append((name, dict(args))), A.Reply("ran"))[1]
 class Fake(A.Agent):
     def __init__(self, call): A.load_all(); self.call = call
     def propose(self, text): return self.call
@@ -11,7 +11,7 @@ class Fake(A.Agent):
 def run(utter, call, answer=None, yes=True):
     ran.clear(); asked = []
     ab = (lambda kind: (asked.append(kind), answer)[1])
-    reply, _ = Fake(call).ask(utter, lambda q: yes, ab)
+    reply, _ = Fake(call).ask(utter, lambda q, *_: yes, ab)
     return reply, list(ran), asked
 
 CASES = [   # (utterance, model call, spoken answer to "what time?", expected asked, expected args or None)
@@ -33,4 +33,18 @@ for utter, call, ans, want_asked, want_args in CASES:
     ok = asked == want_asked and got_args == want_args
     bad += not ok
     print(("ok  " if ok else "FAIL"), f"{utter!r:50} asked={asked} ran={got_args}  reply={reply!r}")
-print(f"{len(CASES) - bad}/{len(CASES)} passed"); raise SystemExit(bad)
+print(f"{len(CASES) - bad}/{len(CASES)} passed")
+if bad: raise SystemExit(bad)
+
+
+# missing reminder text and time: asked one after the other
+def test_reminder_asks_both():
+    ran.clear(); asked = []
+    answers = {"time": "in 20 minutes", "set_reminder.text": "drink water"}
+    reply, _ = Fake(("set_reminder", {})).ask("set a reminder", lambda q, *_: True, lambda k: (asked.append(k), answers[k])[1])
+    assert asked == ["time", "set_reminder.text"], asked
+    assert ran and ran[0][1] == {"when": "in 20 minutes", "text": "drink water"}, ran
+    print("ok   set a reminder -> asked time, then text ->", ran[0][1])
+
+
+test_reminder_asks_both()

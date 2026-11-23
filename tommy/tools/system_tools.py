@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Literal
-from ..registry import tool
+from ..registry import Reply, tool
 from .. import system
 from ..durations import parse_span
 
@@ -20,11 +20,12 @@ def do_not_disturb(state: Literal["on", "off"], duration: str = "") -> str:
 def hotspot(state: Literal["on", "off"]) -> str:
     """Turn the Wi-Fi hotspot on or off."""
     verb = "up" if state == "on" else "down"
-    system.run(["nmcli", "--wait", "30", "connection", verb, "Hotspot"], timeout=40)
+    if not system.ok(["nmcli", "--wait", "30", "connection", verb, "Hotspot"], timeout=40):
+        return Reply(f"The hotspot didn't turn {state}.", "failed")
     return f"Hotspot {state}."
 
 
-@tool()
+@tool(says="info")
 def network_status() -> str:
     """Say whether the network is healthy, from the last connection check."""
     hist = Path("/var/log/net-diag/history.log")

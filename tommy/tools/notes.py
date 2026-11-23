@@ -14,7 +14,7 @@ def add_note(text: str) -> str:
     return "Noted."
 
 
-@tool(count="how many recent notes")
+@tool(says="info", count="how many recent notes")
 def read_notes(count: int = 3) -> str:
     """Read back the latest quick notes."""
     lines = NOTES.read_text().splitlines()[-max(1, min(count, 10)):] if NOTES.exists() else []

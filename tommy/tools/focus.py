@@ -1,5 +1,5 @@
 from typing import Literal
-from ..registry import tool
+from ..registry import Reply, tool
 from .. import system
 from ..durations import parse_span
 
@@ -9,14 +9,13 @@ def focus_start(duration: str = "") -> str:
     """Start a focus (Pomodoro) session."""
     mins = int(round(parse_span(duration) / 60)) if duration and parse_span(duration) else 0
     left = system.qs_ipc("focus", "start", mins)
-    return f"Focus started, {left} left." if left else "Couldn't reach the shell."
+    return f"Focus started, {left} left." if left else Reply("I couldn't reach the shell.", "failed")
 
 
 @tool()
 def focus_stop() -> str:
     """Stop the focus session."""
-    system.qs_ipc("focus", "stop")
-    return "Focus stopped."
+    return "Focus stopped." if system.ok(["qs", "-c", "caelestia", "ipc", "call", "focus", "stop"]) else Reply("I couldn't reach the shell.", "failed")
 
 
 @tool()
@@ -25,10 +24,10 @@ def focus_pause() -> str:
     return f"Focus {system.qs_ipc('focus', 'pause') or 'toggled'}."
 
 
-@tool()
+@tool(says="info")
 def focus_status() -> str:
     """Say how the focus session and today's count are going."""
-    return system.qs_ipc("focus", "status") or "Couldn't reach the shell."
+    return system.qs_ipc("focus", "status") or Reply("I couldn't reach the shell.", "failed")
 
 
 @tool(action="start, pause, reset or status")
@@ -42,4 +41,4 @@ def stopwatch(action: Literal["start", "pause", "reset", "status"]) -> str:
         system.qs_ipc("stopwatch", "toggle"); return "Stopwatch running."
     if action == "pause" and running:
         system.qs_ipc("stopwatch", "toggle"); return "Stopwatch paused."
-    return status or "Couldn't reach the shell."
+    return Reply(status, "info") if status else Reply("I couldn't reach the shell.", "failed")

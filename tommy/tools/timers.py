@@ -1,5 +1,5 @@
 from typing import Literal
-from ..registry import tool
+from ..registry import Reply, tool
 from .. import system
 from ..durations import parse_span, human, is_now
 
@@ -32,7 +32,7 @@ def schedule_power(action: Literal["sleep", "poweroff", "lock"], after: str) -> 
     return f"OK, {action} now." if is_now(after) else f"OK, {action} in {human(secs)}."
 
 
-@tool()
+@tool(says="info")
 def list_scheduled() -> str:
     """List pending timers, reminders and scheduled power actions."""
     rows = system.scheduled()
@@ -41,10 +41,10 @@ def list_scheduled() -> str:
     return "; ".join(f"{d.replace('tommy ', '')} in {human(left)}" for _, d, left in rows)
 
 
-@tool(what="which to cancel: 'all', or a word like 'sleep', 'timer', 'reminder'")
+@tool(risk="confirm", says="cancelled", what="which to cancel: 'all', or a word like 'sleep', 'timer', 'reminder'")
 def cancel_scheduled(what: str = "all") -> str:
     """Cancel pending timers, reminders or scheduled power actions."""
     rows = [r for r in system.scheduled() if what.lower() in ("all", "") or what.lower() in r[1].lower()]
     for unit, _, _ in rows:
         system.cancel(unit)
-    return f"Cancelled {len(rows)}." if rows else "Nothing to cancel."
+    return f"Cancelled {len(rows)}." if rows else Reply("There was nothing to cancel.", "info")

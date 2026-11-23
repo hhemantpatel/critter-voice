@@ -17,6 +17,14 @@ def run(argv, timeout=10):
         return ""
 
 
+def ok(argv, timeout=10):
+    """Run argv; True only if it really succeeded."""
+    try:
+        return subprocess.run(argv, capture_output=True, timeout=timeout).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def qs_ipc(target, fn, *args):
     return run(["qs", "-c", "caelestia", "ipc", "call", target, fn, *map(str, args)])
 
@@ -41,7 +49,24 @@ def schedule(kind, seconds, argv, description):
         capture_output=True, text=True)
     if out.returncode != 0:
         raise RuntimeError(out.stderr.strip() or "systemd-run failed")
+    write_state()
     return unit
+
+
+STATE = Path.home() / ".local" / "state" / "tommy" / "timers.json"
+
+
+def write_state():
+    """Tell the desktop what is running: the shell's floating clock (TimerPill.qml) watches this file."""
+    import json
+    items = []
+    for unit, text, left in scheduled():
+        kind = unit[len(PREFIX):].split("-")[0]
+        label = text.replace(f"tommy {kind}", "", 1).lstrip(": ").strip()
+        items.append({"kind": kind, "label": label, "due": int(time.time() + left)})
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    # written in place, not replaced: the shell's file watcher follows this file, and a rename would swap it away
+    STATE.write_text(json.dumps({"items": items}))
 
 
 def fire_cmd(*args):
@@ -67,6 +92,7 @@ def cancel(unit):
     if not unit.startswith(PREFIX):                 # never stop anything that isn't ours
         raise ValueError("not a tommy timer")
     run(["systemctl", "--user", "stop", unit if unit.endswith(".timer") else unit + ".timer"])
+    write_state()
 
 
 def is_locked():

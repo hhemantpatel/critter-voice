@@ -164,7 +164,7 @@ vendor/llama.cpp/build/bin/llama-quantize runs/q.f16.gguf models/tommy/qwen3-0.6
 ## Run
 
 On the author's machine Jarvis runs as a user service that starts when the charger is plugged in and stops on battery
-(`system/`: `jarvis.service`, `jarvis-power.path`, `jarvis-power.sh`; `jarvis on | off | status | log`). While it listens, the desktop
+(`system/`: `jarvis.service`, `jarvis-power.path`, `jarvis-power.sh`; `jarvis on | off | status | log`; `jarvis help` lists every command). While it listens, the desktop
 critter wears headphones and shows a pulsing dot (needs the matching shell IPC, `buddy hearing true|false`).
 
 

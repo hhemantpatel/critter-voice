@@ -1,7 +1,59 @@
 #!/bin/sh
-# jarvis on | off | pause [min] | resume | status | log | wrong [N] | right [N] | review  -- control the always-listening voice assistant
+# jarvis on | off | pause [min] | resume | status | log | wrong [N] | right [N] | review | help  -- control the always-listening voice assistant
 dir=${XDG_RUNTIME_DIR:-/tmp}
+repo=$HOME/personal_projects/critter-voice
+
+show_help() {
+    cat <<'END'
+JARVIS - your voice assistant
+
+TYPE THESE IN THE TERMINAL
+  jarvis on          Turn Jarvis on.
+  jarvis off         Turn Jarvis off until you plug in the charger again.
+  jarvis status      See if Jarvis is on or off.
+  jarvis pause       Jarvis ignores his name for 10 minutes.
+  jarvis pause 30    The same, for 30 minutes (any number works).
+  jarvis resume      End the pause now.
+  jarvis log         Watch what Jarvis hears and does. Press Ctrl+C to stop.
+  jarvis wrong       He woke up by mistake. Mark the last wake as wrong.
+  jarvis wrong 3     Mark the last 3 wakes as wrong.
+  jarvis right       He was right to wake up. Mark the last wake as right.
+  jarvis right 3     Mark the last 3 wakes as right.
+  jarvis review      Go through what he heard and say what was right or wrong.
+  jarvis help        Show this page.
+
+SAY THESE (say "Jarvis", wait for his greeting, then speak)
+  Commands marked * ask you "yes or no" first. Answer yes / haan, or no / nahi.
+
+  Timer              "set a timer for 10 minutes"
+  Reminder           "remind me to drink water in 20 minutes"
+  What is set        "what is scheduled"
+  Cancel one *       "cancel the timer", "cancel the reminder", "cancel the sleep"
+  Cancel all *       "cancel everything" (timers, reminders and planned sleep or shut down)
+  Sleep *            "put the PC to sleep now", "sleep after 25 minutes"
+  Shut down *        "shut down in an hour"
+  Lock *             "lock the screen in 5 minutes"
+  Open an app        "open classroom", "whatsapp kholo"
+  Close an app       "close Brave" (the window on the screen you are using)
+  Close them all *   "close all Brave windows"
+  Close this one *   "close this window"
+  Find music         "play believer by imagine dragons" (opens a YouTube search)
+  Control music      "pause the music", "resume the music", "next song", "previous song"
+  Focus session      "start a focus session", "pause focus", "stop focus"
+  Focus status       "focus status" (time left and today's count)
+  Stopwatch          "start the stopwatch", "pause the stopwatch", "reset the stopwatch"
+  Notes              "note this down: buy milk", "read my notes"
+  Do not disturb     "dnd on for 30 minutes", "dnd off"
+  Hotspot *          "turn on the hotspot", "turn off the hotspot"
+  Internet           "is my internet working" (tells you the last check)
+  Woke by mistake    "wrong" or "galti se" (only by voice)
+
+Jarvis listens when you plug in the charger and stops on battery.
+END
+}
+
 case "$1" in
+    ""|help|-h|--help) show_help ;;
     on)     rm -f "$dir/jarvis-off"; systemctl --user start jarvis.service; echo "Jarvis is listening." ;;
     off)    touch "$dir/jarvis-off"; systemctl --user stop jarvis.service; echo "Jarvis is off until you plug the charger in again (or run: jarvis on)." ;;
     status) if systemctl --user is-active --quiet jarvis.service; then echo "listening"; else echo "off"; fi
@@ -10,8 +62,8 @@ case "$1" in
             echo $(( $(date +%s) + m * 60 )) > "$dir/jarvis-paused"; echo "Jarvis ignores its name for $m min (jarvis resume to end it)." ;;
     resume) rm -f "$dir/jarvis-paused"; echo "Jarvis is listening again." ;;
     log)    journalctl --user -u jarvis.service -n 40 -f ;;
-    wrong)  "$HOME/personal_projects/critter-voice/.venv-train/bin/python" "$HOME/personal_projects/critter-voice/learn.py" wrong "${2:-1}" ;;
-    right)  "$HOME/personal_projects/critter-voice/.venv-train/bin/python" "$HOME/personal_projects/critter-voice/learn.py" right "${2:-1}" ;;
-    review) "$HOME/personal_projects/critter-voice/.venv-train/bin/python" "$HOME/personal_projects/critter-voice/learn.py" review ;;
-    *)      echo "usage: jarvis on | off | pause [min] | resume | status | log | wrong [N] (last wake was false) | right [N] | review" ;;
+    wrong)  "$repo/.venv-train/bin/python" "$repo/learn.py" wrong "${2:-1}" ;;
+    right)  "$repo/.venv-train/bin/python" "$repo/learn.py" right "${2:-1}" ;;
+    review) "$repo/.venv-train/bin/python" "$repo/learn.py" review ;;
+    *)      echo "I don't know that one. See: jarvis help" ;;
 esac

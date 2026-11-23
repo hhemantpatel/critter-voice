@@ -331,3 +331,6 @@ Complaint: "start a timer of 25 minutes" took about 20 s, random wakes, missed w
 - With several windows "close X" now means the one on the screen in use (visible workspace of the focused monitor; the focused window if several are there). "all" / "sab"
   means every window and asks. None on this screen: asks about all of them. First version failed silently (an unused special workspace has no `id` in `hyprctl monitors -j`,
   and the fake test data had one); found by a dry run on the real desktop, then verified with three throwaway windows on three workspaces: closed 1, left 2.
+- `jarvis help` (also `-h`, `--help`): every terminal command and example phrase in plain English. Each example was run through the command model
+  first; bare "play", "pause" and "reset" were dropped (not understood, or taken as music), and "cancel all timers" became "cancel everything",
+  because the model reads both as all, reminders and planned sleep included.

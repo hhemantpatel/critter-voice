@@ -18,7 +18,7 @@ CLOCK = {   # phrase -> (hour, minute, days ahead)
     "5pm": (17, 0, 0), "5:30 pm": (17, 30, 0), "17:45": (17, 45, 0), "shaam 5 baje": (17, 0, 0),
     "shaam paune paanch baje": (16, 45, 0), "subah 7 baje": (7, 0, 1), "kal subah 7 baje": (7, 0, 1),
     "raat 11 baje": (23, 0, 0), "raat 2 baje": (2, 0, 1), "3 baje": (15, 0, 0), "saadhe paanch baje": (17, 30, 0),
-    "sawa paanch baje": (17, 15, 0), "dedh baje": (1, 30, 1), "8 am": (8, 0, 1), "7 30 am": (7, 30, 1), "7 thirty a.m.": (7, 30, 1), "saam paanch baje": (17, 0, 0), "5 p.m.": (17, 0, 0), "tomorrow 9 am": (9, 0, 1),
+    "sawa paanch baje": (17, 15, 0), "dedh baje": (1, 30, 1), "8 am": (8, 0, 1), "7 30 am": (7, 30, 1), "7.30 am": (7, 30, 1), "07.30 a.m.": (7, 30, 1), "5.15 baje": (17, 15, 0), "7 thirty a.m.": (7, 30, 1), "saam paanch baje": (17, 0, 0), "5 p.m.": (17, 0, 0), "tomorrow 9 am": (9, 0, 1),
 }
 
 def main():

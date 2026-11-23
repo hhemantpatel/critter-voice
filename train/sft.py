@@ -71,9 +71,14 @@ def main():
     ap.add_argument("--epochs", type=float, default=3); ap.add_argument("--lr", type=float, default=None)
     ap.add_argument("--bs", type=int, default=8); ap.add_argument("--max-rows", type=int, default=None)
     ap.add_argument("--eval-limit", type=int, default=None); ap.add_argument("--tag", default="")
+    ap.add_argument("--extra", help="extra rows (jsonl), e.g. your reviewed real use"); ap.add_argument("--extra-reps", type=int, default=5)
+    ap.add_argument("--cpu", action="store_true", help="allow a (very slow) CPU run")
     a = ap.parse_args()
     kind = "gemma" if "gemma" in a.model.lower() else "qwen"
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cpu" and not a.cpu:
+        raise SystemExit("No CUDA GPU (driver updated without a reboot, or integrated mode). A CPU run takes over an hour and slows "
+                         "everything else: pass --cpu to do it anyway.")
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
     tok = AutoTokenizer.from_pretrained(ROOT / "models" / a.model)
     model = AutoModelForCausalLM.from_pretrained(ROOT / "models" / a.model, torch_dtype=dtype).to(device)
@@ -85,6 +90,10 @@ def main():
     load = lambda f: [json.loads(l) for l in (ROOT / "data/out" / f).read_text().splitlines()]
     train, test = load("train.jsonl"), load("test.jsonl")
     if a.max_rows: train = random.Random(0).sample(train, a.max_rows)
+    if a.extra:
+        extra = [json.loads(l) for l in (ROOT / a.extra).read_text().splitlines() if l.strip()]
+        train += extra * a.extra_reps          # real requests count more than generated ones
+        print(f"+ {len(extra)} real requests x{a.extra_reps}", flush=True)
     data = [encode(tok, kind, r) for r in train]
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=lr, weight_decay=0.0)

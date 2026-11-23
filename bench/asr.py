@@ -6,7 +6,7 @@ import argparse, json, re, sys, time, wave
 from pathlib import Path
 import numpy as np, torch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tommy.durations import parse_span, parse_clock
+from bench.common import meaning, wer
 from transformers import pipeline
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -14,29 +14,6 @@ MODELS = [("whisper-base (control, en)", "whisper-base", "en"),
           ("whisper-tiny-hinglish", "whisper-tiny-hinglish", None),
           ("whisper-base-hinglish", "whisper-base-hinglish", None),
           ("Hindi2Hinglish-Swift", "Whisper-Hindi2Hinglish-Swift", None)]
-
-
-def norm(s):
-    s = re.sub(r"[^a-z0-9 :]", " ", s.lower().replace("-", " "))
-    return re.sub(r"\s+", " ", s).strip().split()
-
-
-def wer(ref, hyp):
-    r, h = norm(ref), norm(hyp)
-    d = list(range(len(h) + 1))
-    for i in range(1, len(r) + 1):
-        p, d[0] = d[0], i
-        for j in range(1, len(h) + 1):
-            p, d[j] = d[j], min(d[j] + 1, d[j - 1] + 1, p + (r[i - 1] != h[j - 1]))
-    return d[len(h)], len(r)
-
-
-def meaning(t):
-    s = parse_span(t)
-    if s:
-        return ("span", s)
-    c = parse_clock(t)
-    return ("clock", c.strftime("%H:%M")) if c else None
 
 
 ap = argparse.ArgumentParser()

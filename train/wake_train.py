@@ -15,7 +15,9 @@ import torch   # first: the openWakeWord feature code installs a scikit-learn st
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from tommy.wake import FRAMES, WEIGHTS, JarvisWake, _features, forward
+from tommy.ears import VOICE_NEEDED
+from tommy.mic import GAIN
+from tommy.wake import FRAMES, WEIGHTS, JarvisWake, _features, stub_sklearn
 
 R = np.random.default_rng(5)
 RNG = random.Random(5)
@@ -26,6 +28,21 @@ CLIP = int(3.6 * SR)
 def load_wav(p):
     w = wave.open(str(p))
     return np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32)
+
+
+_vad = None
+
+
+def voice(a):
+    """Peak voice level of a clip at run-time loudness. A "Jarvis" clip without one is blank or a whisper, and trains silence as the word."""
+    global _vad
+    if _vad is None:
+        stub_sklearn()
+        from openwakeword.vad import VAD
+        _vad = VAD()
+    x = np.clip(a, -32768, 32767).astype(np.int16)
+    _vad.reset_states()
+    return max((float(_vad.predict(x[i:i + HOP], frame_size=320)) for i in range(0, len(x) - HOP, HOP)), default=0.0)
 
 
 def speech_span(a, floor_pct=20):
@@ -103,6 +120,12 @@ def crop(a, n=CLIP):
     return np.clip(a, -32768, 32767).astype(np.int16)
 
 
+def true_level(a, n=CLIP):
+    """The clip at the loudness it really had (0.5x-2x), over faint noise: crop() would amplify a quiet room into something else."""
+    a = np.resize(a, n).astype(np.float32) if len(a) < n else a[:n]
+    return np.clip(np.roll(a, RNG.randrange(n)) * RNG.uniform(0.5, 2.0) + R.standard_normal(n) * RNG.uniform(0, 12), -32768, 32767).astype(np.int16)
+
+
 def embed(clips, feats, batch=64):
     out = []
     for i in range(0, len(clips), batch):
@@ -142,6 +165,27 @@ def main():
     user_cmd = [load_wav(ROOT / "data/wake" / r["file"]) for r in labels if r["kind"] == "JARVIS" and "," in r["text"]]
     user_neg = [load_wav(ROOT / "data/wake" / r["file"]) for r in labels if r["kind"] == "NOT"]
     cmd_recs = [load_wav(p) for p in sorted((ROOT / "data/recordings").glob("*.wav"))]
+    blank = [c for c in user_pos if voice(c * GAIN) < VOICE_NEEDED]
+    user_pos = [c for c in user_pos if voice(c * GAIN) >= VOICE_NEEDED]
+    print(f"dropped {len(blank)} of your wake clips with no voice in them", flush=True)
+    # real use: wakes you marked, and wakes with no voice at all (nobody can have called). Unmarked wakes WITH a voice are not used.
+    log = lambda f: [json.loads(l) for l in (ROOT / "data/usage" / f).read_text().splitlines() if l.strip()] if (ROOT / "data/usage" / f).exists() else []
+    marks = {r["ts"]: r.get("wake") for r in log("reviewed.jsonl")}
+    silent = []                                                  # already at run-time loudness
+    for e in log("events.jsonl"):
+        f = ROOT / "data/usage/wake" / str(e.get("wake_audio"))
+        if not f.exists():
+            continue
+        c = load_wav(f)
+        if len(c) < SR:
+            continue
+        if voice(c) < VOICE_NEEDED and marks.get(e["ts"]) is not True:
+            silent.append(c)
+        elif marks.get(e["ts"]) is False:
+            user_neg.append(c)
+        elif marks.get(e["ts"]) is True:
+            user_pos.append(c)
+    print(f"real use: {len(silent)} wakes with no voice (trained as not-Jarvis)", flush=True)
     collect_room(user_pos + user_neg + cmd_recs)
     print(f"synthetic: {len(pos_synth)} positive, {len(neg_synth)} negative | yours: {len(user_pos)} wake, {len(user_cmd)} wake+command, "
           f"{len(user_neg)} ordinary, {len(cmd_recs)} command recordings | room-noise pieces: {len(ROOM)}", flush=True)
@@ -156,6 +200,7 @@ def main():
     tr_un, te_un = split(user_neg, 0.34)
     tr_ps, te_ps = split(pos_synth, 0.15)
     tr_ns, te_ns = split(neg_synth, 0.15)
+    tr_si, te_si = split(silent, 0.34)
     te_uc = [] if a.final else user_cmd
     print(f"training on {len(tr_up)} of your wake clips, {len(tr_un)} ordinary; testing on {len(te_up)} / {len(te_un)} / {len(te_uc)} wake+command", flush=True)
 
@@ -182,6 +227,10 @@ def main():
             for em in embed(sel, feats):
                 for win, lab in windows(em):
                     X.append(win); Y.append(0)
+    quiet = [true_level(c) for c in tr_si for _ in range(25)] + [true_level(np.asarray(ROOM[RNG.randrange(len(ROOM))]) * GAIN) for _ in range(200)]
+    for em in embed(quiet, feats):
+        for win, lab in windows(em):
+            X.append(win); Y.append(0)
     noise_clips = [np.clip(noise(CLIP, k), -32768, 32767).astype(np.int16) for k in ["white", "pink", "brown", "hum", "room"] * 60]
     for em in embed(noise_clips, feats):
         for win, lab in windows(em):
@@ -221,6 +270,9 @@ def main():
                 wins = np.stack([win for win, _ in windows(em)])
                 sc = scores(wins)
                 hard.extend(wins[sc > 0.2])
+        for em in embed([true_level(c) for c in tr_si for _ in range(4)], feats) if tr_si else []:
+            wins = np.stack([win for win, _ in windows(em)])
+            hard.extend(wins[scores(wins) > 0.2])
         print(f"mining round {rnd + 1}: {len(hard)} windows scored above 0.2", flush=True)
         if not hard:
             break
@@ -233,35 +285,28 @@ def main():
          "w2": net[3].weight.detach().numpy().T.astype(np.float32), "b2": net[3].bias.detach().numpy().astype(np.float32)}
 
     # ---- honest test through the real streaming path ----
-    def stream_max(audio):
-        det = JarvisWake.__new__(JarvisWake); det.w = w; det.feats = _features()
-        pad = np.zeros(int(0.8 * SR), np.int16)
-        x = np.concatenate([pad, audio.astype(np.int16), pad])
-        best, prev = 0.0, 0.0
-        for i in range(0, len(x) - HOP + 1, HOP):
-            sc = det.predict(x[i: i + HOP])
-            best, prev = max(best, min(sc, prev)), sc          # fires only if two frames in a row are high
-        return best
+    det = JarvisWake.__new__(JarvisWake)
+    det.feats, det.prev = _features(), 0.0
+    det._blank = det.feats.feature_buffer.copy()
+
+    def stream_max(weights, audio):
+        det.w = weights
+        det.reset()
+        pad = (R.standard_normal(int(0.8 * SR)) * 8).astype(np.int16)
+        x = np.concatenate([pad, np.clip(audio, -32768, 32767).astype(np.int16), pad])
+        return max(det.predict(x[i: i + HOP]) for i in range(0, len(x) - HOP + 1, HOP))
     if not a.final:
-        pos_scores = {"your wake clips": [stream_max(c * 1.0) for c in te_up], "your wake+command clips": [stream_max(c) for c in te_uc],
-                      "synthetic wake clips": [stream_max(place(c, 1.0, 0.3)[0]) for c in te_ps[:60]]}
-        neg_scores = {"your ordinary speech": [stream_max(c) for c in te_un], "synthetic speech": [stream_max(crop(c)) for c in te_ns[:150]],
-                      "your command recordings": [stream_max(c) for c in cmd_recs[:48]],
-                      "noise": [stream_max(c) for c in noise_clips[::20]]}
-        neg_seconds = {"your ordinary speech": sum(len(c) for c in te_un) / SR, "synthetic speech": 150 * CLIP / SR,
-                       "your command recordings": sum(len(c) for c in cmd_recs[:48]) / SR, "noise": len(noise_clips[::20]) * CLIP / SR}
-        print("\nthreshold  " + "  ".join(f"{k[:22]:>22}" for k in pos_scores) + "   false alarms per hour of speech/noise")
-        for t in (0.3, 0.5, 0.7, 0.8, 0.9, 0.95):
-            det = "  ".join(f"{100 * np.mean(np.array(v) >= t):21.0f}%" for v in pos_scores.values())
-            fa = sum(int(np.sum(np.array(v) >= t)) for v in neg_scores.values())
-            hrs = sum(neg_seconds.values()) / 3600
-            per = {k: int(np.sum(np.array(v) >= t)) for k, v in neg_scores.items()}
-            print(f"  {t:.2f}    {det}   {fa} false alarms in {hrs * 60:.1f} min (~{fa / hrs:.0f}/h)  {per}")
-        for k, v in pos_scores.items():
-            print(f"  scores {k}: {np.round(sorted(v), 2).tolist()}")
+        sets = {"your Jarvis": [c * GAIN for c in te_up], "your Jarvis+command": [c * GAIN for c in te_uc], "synthetic Jarvis": [place(c, 1.0, 0.3)[0] for c in te_ps[:60]],
+                "no-voice wakes": te_si, "your ordinary speech": [c * GAIN for c in te_un], "your commands": [c * GAIN for c in cmd_recs],
+                "synthetic speech": [crop(c) for c in te_ns[:150]]}
+        models = {"NEW": w, **({"CURRENT": dict(np.load(WEIGHTS))} if WEIGHTS.exists() else {})}
+        res = {m: {k: np.array([stream_max(ww, c) for c in v]) for k, v in sets.items()} for m, ww in models.items()}
+        print("\nfires at 0.9 (CURRENT was trained on all of your clips, so its first two rows are flattered)")
+        for k, v in sets.items():
+            print(f"  {k:22} n={len(v):3d}  " + "   ".join(f"{m} {int((r[k] >= 0.9).sum()):3d}" for m, r in res.items()) + ("   <- should fire" if "Jarvis" in k else ""))
         return
     # threshold for live use: chosen from the held-out run (default 0.8), stored with the weights
-    w["threshold"] = np.float32(0.8)
+    w["threshold"] = np.float32(0.9)
     WEIGHTS.parent.mkdir(parents=True, exist_ok=True)
     np.savez(WEIGHTS, **w)
     print("saved", WEIGHTS)

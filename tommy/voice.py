@@ -1,305 +1,186 @@
-"""Voice front end: mic -> wake word ("hey jarvis") -> voice-activity detection -> speech-to-text -> Tommy agent -> bubble.
+"""Jarvis: wait for the wake word, record one command, act, answer.
 
-    .venv-train/bin/python -m tommy.voice                 # always listening for "hey jarvis"
-    .venv-train/bin/python -m tommy.voice --no-wake       # press Enter to talk instead (no wake word)
-    .venv-train/bin/python -m tommy.voice --wav clip.wav  # run one recording through the whole chain
+    .venv-train/bin/python -m tommy.voice               # always listening for "Jarvis" (normally run by jarvis.service)
+    .venv-train/bin/python -m tommy.voice --no-wake     # press Enter to talk instead
 
-Audio is held in memory only, never written to disk. Needs the packages in .venv-train.
+mic.py (sound in) -> ears.py (wake word, end of speech, speech-to-text) -> agent.py (what to do, safety) -> speak.py (answer)
+Audio stays in memory, except the wake clips kept for learn.py (--no-learn turns that off).
 """
-import argparse, collections, difflib, importlib.machinery, re, subprocess, sys, time, types, wave
+import argparse, collections, json, os, re, signal, time, wave
 from pathlib import Path
-
 import numpy as np
+from . import speak, system
+from .agent import Agent
+from .ears import Ears
+from .mic import FRAME_S, Mic, RATE
+from .system import ROOT
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-RATE, FRAME = 16000, 1280            # 80 ms frames (what the wake word model expects)
-GAIN = 4.0                           # the internal mic is quiet (peak ~4% of full scale); wake word and VAD like louder input
-WAKE_THRESHOLD, COOLDOWN = 0.4, 2.0
-SPEECH_P, QUIET_P, END_SILENCE_FRAMES, MIN_SPEECH_FRAMES = 0.4, 0.15, 21, 3   # speech starts above 0.4; only frames below 0.15 count as quiet; end = 1.7 s of quiet (21 x 80 ms)
-PREROLL = 4
-HINT = "Jarvis, set a timer, reminder, sleep, shutdown, lock, focus, stopwatch, notes, do not disturb, hotspot."   # nudges the speech model toward our commands
-SEG_QUIET_FRAMES, SEG_MAX_FRAMES = 7, 40       # a wake phrase is a short burst: ends after 0.56 s of quiet, longer than 3.2 s = ordinary talk
 YES = {"yes", "yeah", "yep", "haan", "han", "ha", "ok", "okay", "sure", "theek", "thik", "kar", "karo", "confirm"}
-NO = {"no", "nope", "nahi", "nahin", "mat", "cancel", "stop", "ruko"}
+NO = {"no", "nope", "nahi", "nahin", "mat", "dont", "don't", "not"}      # not "cancel"/"stop": "yes, cancel it" confirms a cancel
+FALSE_WAKE = {"wrong", "false alarm", "not you", "galti se", "galti", "kuch nahi", "nothing", "ignore", "never mind", "galat", "not for you"}
+QUESTIONS = {"time": ("what_time", "What time, sir?"), "set_reminder.text": ("remind_what", "What should I remind you about, sir?"),
+             "add_note.text": ("note_what", "What should I note down, sir?")}
+USAGE = ROOT / "data" / "usage"          # local only (git-ignored); delete the folder to forget everything
+PAUSED = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "jarvis-paused"      # holds the time until which to ignore the wake word
 
 
-def _stub_sklearn():
-    # openWakeWord imports scikit-learn only for training a custom verifier; the detector never uses it.
-    for name, attrs in {"sklearn": [], "sklearn.linear_model": ["LogisticRegression"], "sklearn.pipeline": ["make_pipeline"],
-                        "sklearn.preprocessing": ["FunctionTransformer", "StandardScaler"]}.items():
-        mod = types.ModuleType(name)
-        mod.__path__ = []
-        mod.__spec__ = importlib.machinery.ModuleSpec(name, None)      # torch calls find_spec() on every loaded module
-        for attr in attrs:
-            setattr(mod, attr, object)
-        sys.modules.setdefault(name, mod)
+def is_false_wake(text):
+    """You said "wrong" / "galti se" right after it woke: you did not call it."""
+    t = re.sub(r"[^a-z ]", "", text.lower()).strip()
+    return t in FALSE_WAKE or any(t.startswith(p) for p in ("false alarm", "galti se", "not you", "wrong wake"))
 
 
-def after_jarvis(text):
-    """If the text contains something like "Jarvis" (speech models spell it many ways), return what follows it, else None."""
-    for m in re.finditer(r"[A-Za-z']+", text):
-        if difflib.SequenceMatcher(None, "jarvis", m.group(0).lower()).ratio() >= 0.62:
-            return text[m.end():].strip(" ,.!?-")
-    return None
+def log_event(event, audio):
+    """Keep what happened, so it can be reviewed and learned from later (learn.py)."""
+    (USAGE / "wake").mkdir(parents=True, exist_ok=True)
+    event["wake_audio"] = f"{event['ts']}.wav"
+    with wave.open(str(USAGE / "wake" / event["wake_audio"]), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(RATE); w.writeframes(audio.tobytes())
+    with (USAGE / "events.jsonl").open("a") as f:
+        f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    if event["outcome"] == "false":                                     # labelled by you: goes into the next wake-word retrain
+        with (USAGE / "reviewed.jsonl").open("a") as f:
+            f.write(json.dumps({"ts": event["ts"], "wake_audio": event["wake_audio"], "wake": False}) + "\n")
 
 
-def make_beep(path, hz=880, ms=110, volume=0.35):
-    """A short synthesised tone (not recorded audio), with a fade in/out so it does not click."""
-    t = np.arange(int(RATE * ms / 1000)) / RATE
-    env = np.minimum(1, np.minimum(t, t[-1] - t) / 0.01)
-    tone = (np.sin(2 * np.pi * hz * t) * env * volume * 32767).astype(np.int16)
-    with wave.open(str(path), "wb") as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(RATE); w.writeframes(tone.tobytes())
+def paused():
+    try:
+        return time.time() < float(PAUSED.read_text())
+    except (OSError, ValueError):
+        return False
 
 
-INFO_TOOLS = {"list_scheduled", "focus_status", "network_status", "read_notes"}
+class Loop:
+    def __init__(self, learn=True):
+        self.learn = learn
+        self.ears, self.agent, self.mic = Ears(), Agent(), None
+        self.mute_until = 0.0              # the wake word is ignored while our own spoken answer is playing
+        self.event = {}
 
+    # ---- answering ----
+    def answer(self, reply):
+        print(f"  {reply.kind}: {reply.text}", flush=True)
+        system.say(reply.text)
+        if reply.kind != "info":           # the answer to a question is the text itself
+            self.mute_until = time.monotonic() + speak.say_async(reply.kind) + 0.3
 
-def reply_clip(reply):
-    """Which situation a text reply belongs to (Tommy's replies are short, fixed-pattern sentences)."""
-    if reply.startswith("Never mind"):
-        return "nevermind"
-    if reply.startswith("Cancelled"):
-        return "cancelled"
-    if reply.startswith(("Sorry", "I didn't", "I wasn't sure")):
-        return "sorry"
-    if reply.startswith(("Couldn't", "The screen is locked")):
-        return "cant"
-    return "done"
+    def question(self, line, text):
+        """Ask out loud, listening from its last words on. Returns what was said, or None."""
+        print(f"  asking: {text}", flush=True)
+        system.say(text)
+        got = self.ears.capture(self.mic, wait_s=8.0, skip=speak.ask(self.mic, line))
+        said = self.ears.transcribe(got[0]) if got else None
+        print(f'  answer: "{said}"', flush=True)
+        return said or None
 
+    def confirm(self, text, line="confirm"):
+        self.asked = True
+        words = set(re.findall(r"[a-z']+", (self.question(line if speak.pick_clip(line) else "confirm", text) or "").lower()))
+        return bool(words & YES) and not words & NO
 
-_last = {}
+    def ask_back(self, kind):
+        self.asked = True
+        line, text = QUESTIONS[kind] if kind in QUESTIONS else ("not_understood", "Could you say that again, sir?")
+        return self.question(line, text) or self.question(line, text)
 
+    # ---- one command ----
+    def think(self, audio):
+        """Runs in the background during the pause after your last word. No side effects: it only works out what to do."""
+        t0 = time.perf_counter()
+        text = self.ears.transcribe(audio)
+        t1 = time.perf_counter()
+        call = self.agent.propose(text) if text else None
+        return text, call, t1 - t0, time.perf_counter() - t1
 
-def play(mic, situation, beep_path=None):
-    """Say one of the recorded lines for this situation ("greet", "done", "confirm" ...), chosen at random but never the same
-    line twice in a row; a beep if the voice files are missing. The mic audio recorded meanwhile is thrown away so Tommy does
-    not hear its own voice."""
-    import random
-    clips = sorted((ROOT / "models/tts/greetings").glob(f"{situation}_*.wav"))
-    if len(clips) > 1:
-        clips = [c for c in clips if c != _last.get(situation)]
-    path = random.choice(clips) if clips else beep_path
-    if path is None:
-        return
-    _last[situation] = path
-    with wave.open(str(path)) as w:
-        seconds = w.getnframes() / w.getframerate()
-    subprocess.run(["pw-play", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(int(seconds / 0.08) + 4):        # the clip, its room echo, and a little margin
-        mic.read()
+    def command(self, wait_s, skip=0):
+        """Listen for one command and do it. None: nobody spoke. False: only the wake word was said. True: handled."""
+        got = self.ears.capture(self.mic, wait_s, skip, self.think)
+        if got is None:
+            return None
+        _, job, last_word = got
+        stopped = time.monotonic()
+        text, call, stt, model = job.result()
+        if not text:
+            return False
+        print(f'  heard: "{text}" -> {call}', flush=True)
+        if is_false_wake(text):
+            self.event.update(heard=text, outcome="false")
+            print("  marked: false wake", flush=True)
+            self.mute_until = time.monotonic() + speak.say_async("declined") + 0.3
+            return True
+        self.asked = False
+        reply, call = self.agent.ask(text, self.confirm, self.ask_back, call)
+        self.event.update(heard=text, call=list(call) if call else None, reply=reply.text, outcome="command")
+        if not self.asked:
+            print(f"  timing: stopped listening {stopped - last_word:.1f}s after your last word | speech-to-text {stt:.2f} model {model:.2f} "
+                  f"| done {time.monotonic() - last_word:.2f}s after your last word", flush=True)
+        self.answer(reply)
+        return True
 
+    def after_wake(self):
+        # you may already be speaking ("Jarvis, set a timer ..."): listen at once, ignoring the tail of "Jarvis" itself
+        if not self.command(1.3, skip=3):
+            self.command(6.0, skip=speak.ask(self.mic, "greet"))         # nothing yet: greet, then wait; silence stays silent
 
-class Mic:
-    # parec, not pw-record: pw-record writes a big-endian .snd stream to a pipe, which reads as loud noise.
-    def __init__(self):
-        self.proc = subprocess.Popen(["parec", "--rate", str(RATE), "--channels", "1", "--format", "s16le", "--latency-msec", "40"],
-                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-
-    def read(self):
-        raw = self.proc.stdout.read(FRAME * 2)
-        if len(raw) < FRAME * 2:
-            raise EOFError("microphone stream ended")
-        x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) * GAIN
-        return np.clip(x, -32768, 32767).astype(np.int16)
-
-    def drain(self):
-        """Throw away audio that piled up while we were busy (speech-to-text takes seconds), so the next
-        wake-word check only sees what is said from now on. Buffered reads return instantly; a live one blocks ~80 ms."""
+    # ---- forever ----
+    def run(self, mic, wake=True):
+        self.mic, last_wake, last_noise, pause_check, is_paused = mic, 0.0, 0.0, 0.0, False
+        ring = collections.deque(maxlen=int(2.5 / FRAME_S))              # what the wake word heard
         while True:
-            t = time.monotonic()
-            self.read()
-            if time.monotonic() - t > 0.04:
-                return
-
-    def close(self):
-        self.proc.terminate()
-
-
-class Ears:
-    def __init__(self, gpu=False):
-        import torch
-        from transformers import pipeline
-        _stub_sklearn()
-        from openwakeword.vad import VAD
-        from tommy.wake import JarvisWake
-        self.wake = JarvisWake()                  # trained on this user's voice; hears sound features only, never words
-        self.vad = VAD()
-        self._seg, self._pre, self._over, self._speech, self._quiet = [], collections.deque(maxlen=PREROLL), False, 0, 0
-        dev = 0 if (gpu and torch.cuda.is_available()) else -1
-        self.asr = pipeline("automatic-speech-recognition", model=str(ROOT / "models/asr/Whisper-Hindi2Hinglish-Swift"),
-                            device=dev, dtype=torch.float16 if dev == 0 else torch.float32)
-        ids = self.asr.tokenizer.get_prompt_ids(HINT)
-        self.prompt_ids = torch.tensor(ids) if not isinstance(ids, torch.Tensor) else ids
-
-    def woke(self, frame):
-        return self.wake.predict(frame) >= self.wake.threshold
-
-    def capture(self, mic, wait_s=5.0, max_s=14.0):
-        """Record from the first speech until 1.7 s of quiet. Returns float32 audio, or None if nobody spoke."""
-        self.vad.reset_states()
-        pre, frames, speech, quiet = collections.deque(maxlen=PREROLL), [], 0, 0
-        t0 = time.monotonic()
-        while time.monotonic() - t0 < max_s:
-            f = mic.read()
-            voiced = self.vad.predict(f, frame_size=320) > SPEECH_P
-            if not frames:
-                pre.append(f)
-                if voiced:
-                    frames, speech = list(pre), 1
-                elif time.monotonic() - t0 > wait_s:
-                    return None
+            if not wake:
+                input("press Enter, then speak ")
+                mic.drain()
+                self.event = {}
+                self.command(6.0)
                 continue
-            frames.append(f)
-            p = self.vad.predict(f, frame_size=320)
-            if p > SPEECH_P:
-                speech, quiet = speech + 1, 0
-            elif p < QUIET_P:
-                quiet += 1                      # dips between 0.15 and 0.4 (soft syllables, short gaps) neither count nor reset
-            if quiet >= END_SILENCE_FRAMES and speech >= MIN_SPEECH_FRAMES:
-                break
-        return np.concatenate(frames).astype(np.float32) / 32768 if frames else None
-
-    def transcribe(self, audio):
-        kw = {"generate_kwargs": {"prompt_ids": self.prompt_ids}} if self.prompt_ids is not None else {}
-        text = self.asr({"raw": audio, "sampling_rate": RATE}, **kw)["text"].strip()
-        return text[len(HINT):].strip() if text.lower().startswith(HINT[:20].lower()) else text
-
-    def push(self, frame):
-        """Idle listening: collect short bursts of speech. Returns a finished burst (float32 audio) or None."""
-        voiced = self.vad.predict(frame, frame_size=320) > SPEECH_P
-        if not self._seg:
-            self._pre.append(frame)
-            if voiced:
-                self._seg, self._speech, self._quiet = list(self._pre), 1, 0
-            return None
-        self._seg.append(frame)
-        self._speech, self._quiet = (self._speech + 1, 0) if voiced else (self._speech, self._quiet + 1)
-        if len(self._seg) > SEG_MAX_FRAMES:                       # too long to be a wake phrase: ordinary conversation
-            self._seg, self._over = [], True
-            return None
-        if self._quiet >= SEG_QUIET_FRAMES:
-            seg, self._seg = self._seg, []
-            return np.concatenate(seg).astype(np.float32) / 32768 if self._speech >= MIN_SPEECH_FRAMES else None
-        return None
-
-    def reset_idle(self):
-        self._seg, self._pre, self._over = [], collections.deque(maxlen=PREROLL), False
-        self.vad.reset_states()
-        self.wake.reset()
+            frame = mic.read()
+            ring.append(frame)
+            woke, now = self.ears.woke(frame), time.monotonic()
+            if now - pause_check > 1.0:
+                pause_check, is_paused = now, paused()
+            if is_paused or now < self.mute_until or now - last_wake < 1.0:
+                continue
+            if self.ears.noise and now - last_noise > 10:                # fired without a voice: noted for training, nothing is reset
+                last_noise = now
+                print(f"  (ignored: score {self.ears.score:.2f}, no voice)", flush=True)
+                if self.learn:
+                    log_event({"ts": time.strftime("%Y%m%d-%H%M%S"), "wake_score": round(self.ears.score, 3),
+                               "voice": round(self.ears.voice, 2), "outcome": "ignored"}, np.concatenate(ring))
+            if not woke:
+                continue
+            print(f"* woke (score {self.ears.score:.2f}, voice {self.ears.voice:.2f})", flush=True)
+            self.event = {"ts": time.strftime("%Y%m%d-%H%M%S"), "wake_score": round(self.ears.score, 3),
+                          "voice": round(self.ears.voice, 2), "outcome": "nothing"}
+            self.after_wake()
+            if self.learn:
+                log_event(self.event, np.concatenate(ring))
+            ring.clear()
+            mic.drain()
+            self.ears.forget()
+            last_wake = time.monotonic()
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--no-wake", action="store_true")
-    ap.add_argument("--wav")
-    ap.add_argument("--speech-wake", action="store_true", help="also wake on the word Jarvis found by transcribing every short phrase heard while idle (uses more CPU, hears more)")
-    ap.add_argument("--gpu", action="store_true", help="run speech-to-text on the GPU (default: CPU, as on battery)")
+    ap.add_argument("--no-wake", action="store_true", help="press Enter instead of saying Jarvis")
+    ap.add_argument("--no-learn", action="store_true", help="keep no wake clips or requests in data/usage")
     a = ap.parse_args()
-    from tommy.agent import Agent
-    from tommy import system
+
+    def stop(*_):
+        raise KeyboardInterrupt                     # systemctl stop -> same clean exit as Ctrl-C
+    signal.signal(signal.SIGTERM, stop)
     t0 = time.monotonic()
-    ears, agent = Ears(a.gpu), Agent()
-    agent.start()
-    print(f"[ready in {time.monotonic() - t0:.1f}s]", flush=True)
-    import os, tempfile
-    beep_file = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()) / "tommy-beep.wav"
-    make_beep(beep_file)
-
-    def handle(audio, mic=None):
-        t = time.monotonic()
-        text = ears.transcribe(audio)
-        print(f'  heard: "{text}"   (speech-to-text {time.monotonic() - t:.2f}s)', flush=True)
-        handle_text(text, mic)
-
-    def handle_text(text, mic=None):
-
-        def confirm(question):
-            if mic is None:
-                return input(f"  confirm {question} [y/N] ").strip().lower() == "y"
-            system.say(f"{question} Say yes or no.")
-            print(f"  asking: {question}", flush=True)
-            play(mic, "confirm", beep_file)
-            ans = ears.capture(mic)
-            words = set(ears.transcribe(ans).lower().replace(",", " ").replace(".", " ").split()) if ans is not None else set()
-            print(f"  answer: {sorted(words)}", flush=True)
-            return bool(words & YES) and not words & NO
-
-        def ask_back(kind):
-            """The model could not find a time in what was said: ask for it out loud and listen (twice, 8 s each)."""
-            for attempt in range(2):
-                system.say("What time, sir?")
-                print("  asking: what time?", flush=True)
-                if attempt:
-                    play(mic, "sorry", beep_file)
-                play(mic, "what_time", beep_file)
-                ans = ears.capture(mic, wait_s=8.0)
-                said = ears.transcribe(ans) if ans is not None else None
-                print(f'  answer: "{said}"', flush=True)
-                if said:
-                    return said
-            return None
-
-        t = time.monotonic()
-        reply, call = agent.ask(text, confirm, ask_back if mic is not None else None)
-        print(f"  -> {call}\n  {reply}   (tommy {time.monotonic() - t:.2f}s)", flush=True)
-        system.say(reply)
-        if mic is not None and not (call and call[0] in INFO_TOOLS):       # answers to questions are read, not "Done, sir"
-            play(mic, reply_clip(reply), beep_file)
-
+    loop = Loop(learn=not a.no_learn)
     try:
-        if a.wav:
-            w = wave.open(a.wav)
-            audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768 * GAIN
-            handle(np.clip(audio, -1, 1))
-            return
+        loop.agent.start()
         mic = Mic()
-        last = 0.0
-        print('say "hey jarvis" then your command' if not a.no_wake else "press Enter, then speak", flush=True)
-        ears.reset_idle()
-        while True:
-            command = None
-            if a.no_wake:
-                input()
-            else:
-                frame = mic.read()
-                fast = ears.woke(frame)
-                seg = ears.push(frame) if a.speech_wake else None
-                if fast and time.monotonic() - last > COOLDOWN:
-                    pass                                              # the wake word model heard "hey jarvis"
-                elif seg is not None and time.monotonic() - last > COOLDOWN:
-                    t = time.monotonic()
-                    text = ears.transcribe(seg)                       # a short burst of speech: is it "Jarvis ..."?
-                    rest = after_jarvis(text)
-                    # only a match is shown: speech that is not for Tommy is checked in memory and dropped, never printed or stored
-                    if rest is not None:
-                        print(f'  (woken by "{text}" in {time.monotonic() - t:.1f}s)', flush=True)
-                    if rest is None:
-                        mic.drain(); ears.reset_idle()
-                        continue
-                    command = rest if len(rest.split()) >= 2 else None  # "hey jarvis set a timer" in one breath
-                else:
-                    continue
-            play(mic, "greet", beep_file)
-            if command is not None:
-                print(f'  heard: "{command}"', flush=True)
-                handle_text(command, mic)
-            else:
-                print("* listening", flush=True)
-                system.say("Listening...")
-                audio = ears.capture(mic)
-                if audio is None:
-                    print("  (heard nothing)", flush=True)
-                else:
-                    handle(audio, mic)
-            mic.drain()                                               # audio that piled up while we were busy
-            ears.reset_idle()
-            last = time.monotonic()
+        print(f"[ready in {time.monotonic() - t0:.1f}s] learning {'off' if a.no_learn else 'on (data/usage, this PC only)'}", flush=True)
+        loop.run(mic, wake=not a.no_wake)
     except (KeyboardInterrupt, EOFError):
         pass
     finally:
-        agent.stop()
+        speak.show_listening(False)
+        loop.agent.stop()
 
 
 if __name__ == "__main__":

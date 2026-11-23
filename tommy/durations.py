@@ -123,7 +123,7 @@ _PERIOD = {"subah": "am", "morning": "am", "savere": "am", "dopahar": "pm", "aft
 def parse_clock(text, now=None):
     """Next occurrence of a wall-clock time like '5:30 pm', '17:45', 'shaam paune paanch baje'."""
     now = now or datetime.now()
-    low = text.lower()
+    low = re.sub(r"\b(\d{1,2})\.(\d{2})(?=\s*(?:[ap]\.?m\b|baje))", r"\1:\2", text.lower())     # "7.30 am" is 7:30, not 7 and 30/100
     toks = _tokens(low)
     day_shift = 1 if any(t in ("kal", "tomorrow", "tmrw") for t in toks) else 0
     period = next((_PERIOD[t] for t in toks if t in _PERIOD), None)
@@ -159,7 +159,7 @@ def parse_clock(text, now=None):
     elif period == "night":
         hour = hour + 12 if 6 <= hour <= 11 else (0 if hour == 12 else hour)   # raat 11 = 23:00, raat 2 = 02:00
     base = now.replace(hour=hour % 24, minute=minute, second=0, microsecond=0) + timedelta(days=day_shift)
-    if period is None and not m and 1 <= hour <= 12 and not day_shift:
+    if period is None and (not m or "baje" in low) and 1 <= hour <= 12 and not day_shift:
         # bare "5 baje": whichever of 05:00 / 17:00 comes next
         cands = [base.replace(hour=hour % 12), base.replace(hour=hour % 12 + 12)]
         future = [c for c in cands if c > now]

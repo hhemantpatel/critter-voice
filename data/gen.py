@@ -117,9 +117,9 @@ SPEC = {
 }
 # clarify: unclear or out of scope; the model must ask instead of guessing.
 CLARIFY = {"train": ["what is the weather", "send a mail to my friend", "tell me a joke", "volume up",
-                     "sleep", "set a timer", "remind me", "hello", "kya haal hai", "kuch karo", "do it", "later", "how old are you",
+                     "sleep", "hello", "kya haal hai", "kuch karo", "do it", "later", "how old are you",
                      "turn it off", "call someone", "brightness kam karo", "kal", "pc"],
-           "test": ["what time is it in tokyo", "open my browser", "make it louder", "timer", "yaad dilao", "do something", "mausam kaisa hai",
+           "test": ["what time is it in tokyo", "make it louder", "do something", "mausam kaisa hai",
                     "shutdown", "thanks", "what can you do"]}
 ASK = {"sleep": "Sleep the PC after how long?", "timer": "For how long?"}
 
@@ -178,22 +178,22 @@ MORE = {
 }
 for k, v in MORE.items():
     SPEC[k]["train"] += v["train"]; SPEC[k]["test"] += v["test"]
+CLARIFY["train"] += ["i am just checking", "are you listening to me", "can you hear me", "testing testing", "hello can you hear me", "what are you doing",
+                     "ok so", "thank you", "good job", "that was great", "wait a second", "let me think", "i am testing this", "is it working", "say something",
+                     "hello jarvis", "how are you doing", "what is going on", "tell me something", "are you there", "are you listening", "i am just checking if you work",
+                     "okay now listen to me", "hmm let me see", "yaar sun", "kya kar rahe ho", "sun raha hai kya", "theek hai", "acha", "ek minute ruko"]
 CLARIFY["train"] += ["what's the temperature", "who are you", "sing a song", "what day is it", "search google", "turn up the volume", "make it brighter",
-                     "send a message", "take a screenshot", "kitne baje hain", "mausam batao", "kya chal raha hai", "set an alarm", "good morning",
-                     "remind", "note", "focus", "stopwatch kya hai", "delete my files", "restart", "log out", "what is two plus two", "translate this", "play a video", "open the settings", "close the window"]
-CLARIFY["test"] += ["what's the weather today", "open the camera", "tell me about yourself", "alarm lagao", "kuch bhi", "play something", "sab theek hai?", "how are you"]
+                     "send a message", "take a screenshot", "kitne baje hain", "mausam batao", "kya chal raha hai", "good morning",
+                     "note", "focus", "stopwatch kya hai", "delete my files", "restart", "log out", "what is two plus two", "translate this", "play a video", "close the window"]
+CLARIFY["test"] += ["just testing if you work", "do you hear me", "okay then", "that's cool", "why is it not working", "hey are you awake", "can you hear something",
+                    "sun rahe ho", "kuch bolo", "dekhte hain"]
+CLARIFY["test"] += ["what's the weather today", "tell me about yourself", "kuch bhi", "play something", "sab theek hai?", "how are you"]
 
 # ---- round 3: media and sites ----
 MEDIA = {
- "open_site:youtube": T(["open youtube", "youtube kholo", "go to youtube", "launch youtube", "youtube chalu karo", "open up youtube please", "youtube open karo", "take me to youtube"],
-                        ["start youtube", "youtube khol do", "can you open youtube"]),
- "open_site:whatsapp": T(["open whatsapp", "whatsapp kholo", "launch whatsapp", "whatsapp open karo", "go to whatsapp", "open whatsapp web", "whatsapp chalu karo"],
-                         ["start whatsapp", "whatsapp khol do", "can you open whatsapp"]),
- "open_site:gmail": T(["open gmail", "gmail kholo", "check my mail", "open my email", "mail kholo", "launch gmail", "gmail open karo"], ["open email", "gmail khol do", "show my emails"]),
- "open_site:github": T(["open github", "github kholo", "go to github", "launch github", "github open karo"], ["start github", "github khol do"]),
- "open_site:chatgpt": T(["open chatgpt", "chatgpt kholo", "launch chatgpt", "go to chatgpt", "chatgpt open karo"], ["start chatgpt", "chatgpt khol do"]),
- "open_site:maps": T(["open maps", "maps kholo", "open google maps", "launch maps", "maps open karo"], ["start maps", "google maps khol do"]),
- "open_site:spotify": T(["open spotify", "spotify kholo", "launch spotify", "start spotify", "spotify chalu karo", "spotify open karo"], ["spotify khol do", "can you open spotify"]),
+ "open_app": T(["open {a}", "{a} kholo", "launch {a}", "start {a}", "{a} open karo", "{a} chalu karo", "open the {a} app", "can you open {a}", "open up {a} please",
+                "go to {a}", "take me to {a}", "{a} khol do", "sir open {a}", "{a} app kholo", "i want to use {a}", "run {a}", "{a} start karo", "please open {a}"],
+               ["could you launch {a}", "{a} chala do", "open {a} for me", "mujhe {a} kholna hai", "bring up {a}"]),
  "play_music": T(["play {q} on youtube", "{q} bajao", "play {q}", "search {q} on youtube", "youtube pe {q} chalao", "play some {q}", "{q} sunao", "i want to listen to {q}",
                   "{q} gaana chalao", "put on {q}", "play {q} music", "{q} laga do"],
                  ["can you play {q}", "{q} play karo", "play me some {q}", "{q} suna do", "youtube par {q} lagao"]),
@@ -204,8 +204,33 @@ MEDIA = {
  "media_control:next": T(["next song", "skip this song", "agla gaana", "next track", "skip", "next gaana lagao", "play the next one"], ["skip the track", "agla gaana lagao", "go to the next song"]),
  "media_control:previous": T(["previous song", "go back a song", "pichla gaana", "previous track", "play the last song again", "pehla wala gaana lagao"], ["go to the previous track", "pichla gaana lagao"]),
 }
+# a timer asked for as a "stopwatch" or "alarm", and timers with no time yet (Tommy then asks "What time, sir?")
+SPEC["start_timer"]["train"] += ["start a {d} stopwatch", "{d} ka stopwatch lagao", "set an alarm for {d}", "alarm {d} baad", "{d} ka alarm lagao",
+                                 "set a {d} alarm", "can you start a {d} stopwatch timer"]
+SPEC["start_timer"]["test"] += ["start a {d} stopwatch please", "alarm laga do {d} ka"]
+SPEC["set_reminder:asktext"] = T(["set a reminder", "reminder lagao", "remind me", "ek reminder set karo", "can you set a reminder", "reminder set kar do",
+                                  "remind me something", "add a reminder please"], ["add a reminder", "reminder laga do", "yaad dilao"])
+SPEC["start_timer:asktime"] = T(["set a timer", "set an alarm", "start a timer", "timer lagao", "alarm lagao", "ek timer lagao", "can you set a timer"],
+                                ["timer chalu karo", "start an alarm", "put a timer"])
 for k, v in MEDIA.items():
     SPEC[k] = v
+def installed_names():
+    """This PC's own app names, read at generation time (never stored in the repository)."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    try:
+        from tommy.apps import apps
+        return [x.name.lower() for x in apps() if 3 <= len(x.name) <= 24 and x.name.isascii()]
+    except Exception:
+        return []
+
+
+APP_TEST = ["notion", "blender", "zoom", "reddit", "audacity", "postman", "figma", "signal", "krita", "google docs"]
+APPS = {"train": [n for n in dict.fromkeys(["youtube", "whatsapp", "gmail", "github", "chatgpt", "maps", "spotify", "vs code", "terminal", "files", "discord", "telegram",
+                  "firefox", "chrome", "calculator", "settings", "instagram", "classroom", "netflix", "linkedin", "steam", "obs", "gimp", "word", "excel", "powerpoint",
+                  "camera", "gallery", "calendar", "my browser", "amazon", "wikipedia", "google drive", "you 2", "your tube", "whats app", "insta", "class room",
+                  "leet code", "twitter", "photos", "music player", "text editor", "task manager"] + installed_names()) if n not in APP_TEST],
+        "test": APP_TEST}
 QUERIES = {"train": ["lofi", "arijit singh songs", "kishore kumar", "relaxing music", "workout music", "imagine dragons", "punjabi songs", "study music", "old hindi songs", "coldplay", "bollywood hits", "arctic monkeys"],
            "test": ["jazz", "ar rahman", "piano music", "sidhu moose wala", "shape of you", "chill beats"]}
 
@@ -226,16 +251,16 @@ def make(split, per_template):
     for key, spec in SPEC.items():
         tool, _, variant = key.partition(":")
         for tpl in spec[split]:
-            for _ in range(per_template):
-                slots = {"q": R.choice(QUERIES[split]), "d": R.choice(D), "c": R.choice(C), "n": R.choice(N), "l": R.choice(L), "r": R.choice(RM)}
+            for _ in range(per_template * (2 if tool == "open_app" else 1)):
+                slots = {"a": R.choice(APPS[split]), "q": R.choice(QUERIES[split]), "d": R.choice(D), "c": R.choice(C), "n": R.choice(N), "l": R.choice(L), "r": R.choice(RM)}
                 text = tpl.format(**slots)
                 args = {}
                 if tool == "start_timer":
-                    args = {"duration": slots["d"]}
+                    args = {} if variant == "asktime" else {"duration": slots["d"]}
                 elif tool == "schedule_power":
                     args = {"action": variant, "after": slots["d"]}
                 elif tool == "set_reminder":
-                    args = {"text": slots["r"], "when": slots["c"] if "{c}" in tpl else slots["d"]}
+                    args = {} if variant == "asktext" else {"text": slots["r"], "when": slots["c"] if "{c}" in tpl else slots["d"]}
                 elif tool == "add_note":
                     args = {"text": slots["n"]}
                 elif tool == "focus_start" and "{d}" in tpl:
@@ -244,8 +269,8 @@ def make(split, per_template):
                     args = {"action": variant}
                 elif tool == "do_not_disturb":
                     args = {"state": variant, **({"duration": slots["d"]} if "{d}" in tpl else {})}
-                elif tool == "open_site":
-                    args = {"site": variant}
+                elif tool == "open_app":
+                    args = {"name": slots["a"]}
                 elif tool == "play_music":
                     args = {"query": slots["q"]}
                 elif tool == "media_control":
